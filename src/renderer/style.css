@@ -52,8 +52,6 @@ html, body {
   overflow: hidden;
   flex-shrink: 0;
   transition: width var(--transition), min-width var(--transition), border-color var(--transition);
-  /* macOS window drag region — interactive children override this */
-  -webkit-app-region: drag;
 }
 
 #sidebar.collapsed {
@@ -73,6 +71,10 @@ body.macos #sidebar {
   padding: 0 14px;
   height: var(--header-h);
   flex-shrink: 0;
+  -webkit-app-region: no-drag;
+}
+
+body.macos #sidebar-header {
   -webkit-app-region: drag;
 }
 
@@ -91,6 +93,10 @@ body.macos #sidebar {
   overflow-x: hidden;
   list-style: none;
   padding: 4px 6px;
+  -webkit-app-region: no-drag;
+}
+
+#project-list * {
   -webkit-app-region: no-drag;
 }
 
@@ -164,6 +170,10 @@ body.macos #sidebar {
   -webkit-app-region: no-drag;
 }
 
+#sidebar-footer * {
+  -webkit-app-region: no-drag;
+}
+
 #add-btn {
   display: flex;
   align-items: center;
@@ -179,6 +189,12 @@ body.macos #sidebar {
   cursor: pointer;
   transition: background var(--transition), color var(--transition), border-color var(--transition);
   outline: none;
+  -webkit-app-region: no-drag;
+}
+
+#add-btn svg,
+#add-btn path {
+  pointer-events: none;
 }
 
 #add-btn:hover {

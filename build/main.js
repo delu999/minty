@@ -34,9 +34,11 @@ var import_electron = require("electron");
 var import_path = __toESM(require("path"));
 var import_fs = __toESM(require("fs"));
 var pty = __toESM(require("node-pty"));
-var __dirname = "/Users/user/coding/minty/src";
 var ptyProcesses = new Map;
 var mainWindow = null;
+function buildPath(...parts) {
+  return import_path.default.join(import_electron.app.getAppPath(), "build", ...parts);
+}
 var dataFile = import_path.default.join(import_electron.app.getPath("userData"), "projects.json");
 function loadProjects() {
   try {
@@ -65,13 +67,13 @@ function createWindow() {
     backgroundColor: "#0f0f0f",
     titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
     webPreferences: {
-      preload: import_path.default.join(__dirname, "preload.js"),
+      preload: buildPath("preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false
     }
   });
-  mainWindow.loadFile(import_path.default.join(__dirname, "renderer", "index.html"));
+  mainWindow.loadFile(buildPath("renderer", "index.html"));
   mainWindow.on("closed", () => {
     mainWindow = null;
   });

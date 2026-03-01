@@ -220,8 +220,8 @@ This must be re-run whenever `electron` or `node-pty` versions change.
 - Key variables: `--bg`, `--bg-sidebar`, `--bg-hover`, `--bg-active`,
   `--border`, `--text`, `--text-dim`, `--text-faint`, `--accent` (#3ecf8e),
   `--sidebar-w` (220px), `--transition` (0.15s ease).
-- `-webkit-app-region: drag` is set on `#sidebar` for macOS window dragging.
-  Interactive children override it with `-webkit-app-region: no-drag`.
+- `-webkit-app-region: drag` is set on `#sidebar-header` (macOS only) for window dragging.
+  Keep project list/footer/button regions as `-webkit-app-region: no-drag` so clicks are never swallowed.
 - `body.macos` is added in `init()` to apply macOS-specific rules (e.g.
   `padding-top: 28px` on the sidebar for traffic-light clearance).
 

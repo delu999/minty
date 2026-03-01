@@ -21,6 +21,10 @@ interface ProjectsData {
 const ptyProcesses = new Map<string, pty.IPty>()
 let mainWindow: BrowserWindow | null = null
 
+function buildPath(...parts: string[]): string {
+  return path.join(app.getAppPath(), "build", ...parts)
+}
+
 // ── Persistence ──────────────────────────────────────────────────────────────
 
 const dataFile = path.join(app.getPath("userData"), "projects.json")
@@ -56,14 +60,14 @@ function createWindow(): void {
     backgroundColor: "#0f0f0f",
     titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
     webPreferences: {
-      preload: path.join(__dirname, "preload.js"),
+      preload: buildPath("preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
     },
   })
 
-  mainWindow.loadFile(path.join(__dirname, "renderer", "index.html"))
+  mainWindow.loadFile(buildPath("renderer", "index.html"))
 
   mainWindow.on("closed", () => {
     mainWindow = null
