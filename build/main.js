@@ -48,7 +48,7 @@ function loadProjects() {
   } catch (err) {
     console.error("Failed to load projects:", err);
   }
-  return { projects: [], activeIndex: -1 };
+  return { projects: [], activeProjectId: null, activeTerminalId: null };
 }
 function saveProjects(data) {
   try {

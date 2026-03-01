@@ -6714,7 +6714,8 @@ var require_addon_fit = __commonJS((exports, module) => {
 var import_xterm = __toESM(require_xterm(), 1);
 var import_addon_fit = __toESM(require_addon_fit(), 1);
 var projects = [];
-var activeIndex = -1;
+var activeProjectId = null;
+var activeTerminalId = null;
 var sidebarVisible = true;
 var sessions = new Map;
 var $sidebar = document.getElementById("sidebar");
@@ -6722,12 +6723,116 @@ var $list = document.getElementById("project-list");
 var $addBtn = document.getElementById("add-btn");
 var $container = document.getElementById("terminals-container");
 var $empty = document.getElementById("empty-state");
-function genId() {
+function genProjectId() {
   return `p_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+}
+function genTerminalId() {
+  return `t_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 }
 function baseName(p) {
   const parts = p.replace(/[/\\]+$/, "").split(/[/\\]/);
   return parts[parts.length - 1] || p;
+}
+function isRecord(value) {
+  return value !== null && typeof value === "object";
+}
+function findProject(projectId) {
+  return projects.find((project) => project.id === projectId);
+}
+function findProjectByTerminal(terminalId) {
+  return projects.find((project) => project.terminals.some((terminal) => terminal.id === terminalId));
+}
+function findTerminal(project, terminalId) {
+  return project.terminals.find((terminal) => terminal.id === terminalId);
+}
+function nextTerminalName(project) {
+  const used = new Set(project.terminals.map((terminal) => terminal.name));
+  let index = 1;
+  while (used.has(`Terminal ${index}`))
+    index += 1;
+  return `Terminal ${index}`;
+}
+function normalizeLoadedData(raw) {
+  if (!isRecord(raw)) {
+    return { projects: [], activeProjectId: null, activeTerminalId: null };
+  }
+  const rawProjects = Array.isArray(raw.projects) ? raw.projects : [];
+  const normalizedProjects = [];
+  for (const item of rawProjects) {
+    if (!isRecord(item))
+      continue;
+    if (typeof item.id !== "string" || typeof item.name !== "string" || typeof item.path !== "string")
+      continue;
+    let terminals = [];
+    if (Array.isArray(item.terminals)) {
+      terminals = item.terminals.filter((terminal) => isRecord(terminal)).filter((terminal) => typeof terminal.id === "string" && typeof terminal.name === "string").map((terminal) => ({ id: terminal.id, name: terminal.name }));
+    }
+    normalizedProjects.push({
+      id: item.id,
+      name: item.name,
+      path: item.path,
+      terminals,
+      expanded: typeof item.expanded === "boolean" ? item.expanded : true
+    });
+  }
+  if (normalizedProjects.length === 0 && Array.isArray(raw.projects)) {
+    const legacyProjects = raw.projects;
+    for (const legacy of legacyProjects) {
+      if (legacy && typeof legacy.id === "string" && typeof legacy.name === "string" && typeof legacy.path === "string") {
+        normalizedProjects.push({
+          id: legacy.id,
+          name: legacy.name,
+          path: legacy.path,
+          terminals: [],
+          expanded: true
+        });
+      }
+    }
+  }
+  let nextActiveProjectId = null;
+  if (typeof raw.activeProjectId === "string" && normalizedProjects.some((project) => project.id === raw.activeProjectId)) {
+    nextActiveProjectId = raw.activeProjectId;
+  } else if (typeof raw.activeIndex === "number") {
+    const byIndex = normalizedProjects[raw.activeIndex];
+    nextActiveProjectId = byIndex?.id ?? null;
+  }
+  let nextActiveTerminalId = null;
+  if (typeof raw.activeTerminalId === "string" && findProjectByTerminalIn(raw.activeTerminalId, normalizedProjects)) {
+    nextActiveTerminalId = raw.activeTerminalId;
+  }
+  if (nextActiveTerminalId) {
+    const owner = findProjectByTerminalIn(nextActiveTerminalId, normalizedProjects);
+    nextActiveProjectId = owner?.id ?? nextActiveProjectId;
+  }
+  if (!nextActiveProjectId && normalizedProjects.length > 0) {
+    nextActiveProjectId = normalizedProjects[0].id;
+  }
+  return {
+    projects: normalizedProjects,
+    activeProjectId: nextActiveProjectId,
+    activeTerminalId: nextActiveTerminalId
+  };
+}
+function findProjectByTerminalIn(terminalId, data) {
+  return data.find((project) => project.terminals.some((terminal) => terminal.id === terminalId));
+}
+function updateEmptyState() {
+  const title = $empty.querySelector(".empty-title");
+  const hint = $empty.querySelector(".empty-hint");
+  if (activeTerminalId) {
+    $empty.classList.add("hidden");
+    return;
+  }
+  $empty.classList.remove("hidden");
+  if (!title || !hint)
+    return;
+  if (activeProjectId) {
+    title.textContent = "No terminal selected";
+    hint.textContent = "Use the + button next to the project name to open a terminal";
+  } else {
+    title.textContent = "No project selected";
+    hint.textContent = "Click Cmd/Ctrl+N to add a project folder";
+  }
 }
 var TERMINAL_THEME = {
   background: "#0f0f0f",
@@ -6752,10 +6857,11 @@ var TERMINAL_THEME = {
   cursorAccent: "#0f0f0f",
   selectionBackground: "rgba(122, 162, 247, 0.25)"
 };
-function createSession(project) {
+function createSession(project, terminalTab) {
   const wrapper = document.createElement("div");
   wrapper.className = "terminal-wrapper";
   wrapper.dataset.projectId = project.id;
+  wrapper.dataset.terminalId = terminalTab.id;
   $container.appendChild(wrapper);
   const terminal = new import_xterm.Terminal({
     theme: TERMINAL_THEME,
@@ -6794,9 +6900,10 @@ function createSession(project) {
     return true;
   });
   terminal.onData((data) => {
-    window.minty.writePty(project.id, data);
+    window.minty.writePty(terminalTab.id, data);
   });
   const session = {
+    terminalId: terminalTab.id,
     terminal,
     fitAddon,
     wrapper,
@@ -6804,128 +6911,292 @@ function createSession(project) {
     cleanupData: null,
     cleanupExit: null
   };
-  sessions.set(project.id, session);
+  sessions.set(terminalTab.id, session);
   return session;
 }
-async function ensureSpawned(project, session) {
+function getOrCreateSession(project, terminalTab) {
+  return sessions.get(terminalTab.id) ?? createSession(project, terminalTab);
+}
+async function ensureSpawned(project, terminalTab, session) {
   if (session.spawned)
     return;
   session.spawned = true;
-  await window.minty.spawnPty(project.id, project.path);
-  session.cleanupData = window.minty.onPtyData(project.id, (data) => {
+  await window.minty.spawnPty(terminalTab.id, project.path);
+  session.cleanupData = window.minty.onPtyData(terminalTab.id, (data) => {
     session.terminal.write(data);
   });
-  session.cleanupExit = window.minty.onPtyExit(project.id, () => {
+  session.cleanupExit = window.minty.onPtyExit(terminalTab.id, () => {
     session.terminal.write(`\r
 \x1B[2m[session ended — press any key to restart]\x1B[0m\r
 `);
     session.spawned = false;
     session.cleanupData?.();
     session.cleanupData = null;
+    session.cleanupExit = null;
   });
 }
-function destroySession(project) {
-  const s = sessions.get(project.id);
+function destroySession(terminalId) {
+  const s = sessions.get(terminalId);
   if (!s)
     return;
   s.cleanupData?.();
   s.cleanupExit?.();
   s.terminal.dispose();
   s.wrapper.remove();
-  sessions.delete(project.id);
-  window.minty.killPty(project.id);
+  sessions.delete(terminalId);
+  window.minty.killPty(terminalId);
 }
-function renderItem(project) {
-  const li = document.createElement("li");
-  li.className = "project-item";
-  li.role = "option";
-  li.tabIndex = 0;
-  li.title = project.path;
-  li.dataset.projectId = project.id;
-  const dot = document.createElement("span");
-  dot.className = "project-dot";
-  const name = document.createElement("span");
-  name.className = "project-name";
-  name.textContent = project.name;
-  li.appendChild(dot);
-  li.appendChild(name);
-  li.addEventListener("click", () => {
-    const idx = projects.findIndex((p) => p.id === project.id);
-    if (idx >= 0)
-      selectProject(idx);
-  });
-  li.addEventListener("contextmenu", (e) => {
-    e.preventDefault();
-    const idx = projects.findIndex((p) => p.id === project.id);
-    if (idx >= 0)
-      removeProject(idx);
-  });
-  return li;
+function renderSidebar() {
+  $list.innerHTML = "";
+  for (const project of projects) {
+    const group = document.createElement("li");
+    group.className = "project-group";
+    group.dataset.projectId = project.id;
+    const row = document.createElement("div");
+    row.className = "project-row";
+    row.role = "treeitem";
+    row.tabIndex = 0;
+    row.title = project.path;
+    row.dataset.projectId = project.id;
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "project-toggle";
+    toggle.textContent = project.expanded ? "▾" : "▸";
+    toggle.title = project.expanded ? "Collapse project" : "Expand project";
+    toggle.addEventListener("click", (e) => {
+      e.stopPropagation();
+      project.expanded = !project.expanded;
+      renderSidebar();
+      save();
+    });
+    const folderIcon = document.createElement("span");
+    folderIcon.className = "project-folder-icon";
+    folderIcon.innerHTML = `
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <path d="M1.5 4.5a1 1 0 011-1h3l1.2 1.2h6.8a1 1 0 011 1v6.8a1 1 0 01-1 1H2.5a1 1 0 01-1-1V4.5z" stroke="currentColor" stroke-width="1.2" />
+      </svg>
+    `;
+    const name = document.createElement("span");
+    name.className = "project-name";
+    name.textContent = project.name;
+    const actions = document.createElement("span");
+    actions.className = "project-actions";
+    const addTerminalBtn = document.createElement("button");
+    addTerminalBtn.type = "button";
+    addTerminalBtn.className = "project-add-terminal";
+    addTerminalBtn.title = "Open new terminal";
+    addTerminalBtn.textContent = "+";
+    addTerminalBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      addTerminal(project.id);
+    });
+    actions.appendChild(addTerminalBtn);
+    row.append(toggle, folderIcon, name, actions);
+    row.addEventListener("click", () => {
+      selectProject(project.id);
+    });
+    row.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      selectProject(project.id);
+    });
+    const terminalList = document.createElement("ul");
+    terminalList.className = "terminal-list";
+    terminalList.setAttribute("role", "group");
+    if (!project.expanded)
+      terminalList.classList.add("collapsed");
+    if (project.terminals.length === 0) {
+      const empty = document.createElement("li");
+      empty.className = "terminal-empty";
+      empty.textContent = "No terminals yet";
+      terminalList.appendChild(empty);
+    } else {
+      for (const terminalTab of project.terminals) {
+        const terminalItem = document.createElement("li");
+        terminalItem.className = "terminal-item";
+        terminalItem.role = "treeitem";
+        terminalItem.tabIndex = 0;
+        terminalItem.dataset.projectId = project.id;
+        terminalItem.dataset.terminalId = terminalTab.id;
+        terminalItem.title = `${project.name} · ${terminalTab.name}`;
+        const dot = document.createElement("span");
+        dot.className = "terminal-dot";
+        const label = document.createElement("span");
+        label.className = "terminal-name";
+        label.textContent = terminalTab.name;
+        terminalItem.append(dot, label);
+        terminalItem.addEventListener("click", () => {
+          selectTerminal(project.id, terminalTab.id);
+        });
+        terminalItem.addEventListener("contextmenu", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          selectTerminal(project.id, terminalTab.id);
+        });
+        terminalList.appendChild(terminalItem);
+      }
+    }
+    group.append(row, terminalList);
+    $list.appendChild(group);
+  }
+  refreshListUI();
+  updateEmptyState();
 }
 function refreshListUI() {
-  const items = $list.querySelectorAll(".project-item");
-  items.forEach((el, i) => el.classList.toggle("active", i === activeIndex));
+  const projectRows = $list.querySelectorAll(".project-row");
+  projectRows.forEach((row) => {
+    const id = row.dataset.projectId ?? "";
+    row.classList.toggle("active", id === activeProjectId && activeTerminalId === null);
+    row.classList.toggle("contains-active-terminal", id === activeProjectId && activeTerminalId !== null);
+  });
+  const terminalItems = $list.querySelectorAll(".terminal-item");
+  terminalItems.forEach((item) => {
+    const terminalId = item.dataset.terminalId ?? "";
+    item.classList.toggle("active", terminalId === activeTerminalId);
+  });
 }
-async function selectProject(index) {
-  if (index < 0 || index >= projects.length)
+function hideActiveTerminal() {
+  if (!activeTerminalId)
     return;
-  if (activeIndex >= 0 && activeIndex < projects.length) {
-    sessions.get(projects[activeIndex].id)?.wrapper.classList.remove("active");
+  sessions.get(activeTerminalId)?.wrapper.classList.remove("active");
+}
+async function selectProject(projectId) {
+  const project = findProject(projectId);
+  if (!project)
+    return;
+  hideActiveTerminal();
+  activeProjectId = project.id;
+  activeTerminalId = null;
+  refreshListUI();
+  updateEmptyState();
+  save();
+}
+async function selectTerminal(projectId, terminalId) {
+  const project = findProject(projectId);
+  if (!project)
+    return;
+  const terminalTab = findTerminal(project, terminalId);
+  if (!terminalTab)
+    return;
+  hideActiveTerminal();
+  activeProjectId = project.id;
+  activeTerminalId = terminalTab.id;
+  if (!project.expanded) {
+    project.expanded = true;
+    renderSidebar();
+  } else {
+    refreshListUI();
+    updateEmptyState();
   }
-  activeIndex = index;
-  const project = projects[index];
-  const session = sessions.get(project.id);
+  const session = getOrCreateSession(project, terminalTab);
   session.wrapper.classList.add("active");
-  $empty.classList.add("hidden");
-  await ensureSpawned(project, session);
+  await ensureSpawned(project, terminalTab, session);
   requestAnimationFrame(() => {
     try {
       session.fitAddon.fit();
-      window.minty.resizePty(project.id, session.terminal.cols, session.terminal.rows);
+      window.minty.resizePty(terminalTab.id, session.terminal.cols, session.terminal.rows);
     } catch {}
     session.terminal.focus();
   });
   refreshListUI();
+  updateEmptyState();
   save();
 }
 async function addProject() {
   const folderPath = await window.minty.openFolderDialog();
   if (!folderPath)
     return;
+  const existing = projects.find((project2) => project2.path === folderPath);
+  if (existing) {
+    await selectProject(existing.id);
+    return;
+  }
   const project = {
-    id: genId(),
+    id: genProjectId(),
     name: baseName(folderPath),
-    path: folderPath
+    path: folderPath,
+    terminals: [],
+    expanded: true
   };
   projects.push(project);
-  $list.appendChild(renderItem(project));
-  createSession(project);
-  await selectProject(projects.length - 1);
+  activeProjectId = project.id;
+  activeTerminalId = null;
+  renderSidebar();
+  save();
 }
-async function removeProject(index) {
-  if (index < 0 || index >= projects.length)
+async function addTerminal(projectId) {
+  const project = findProject(projectId);
+  if (!project)
+    return;
+  const terminalTab = {
+    id: genTerminalId(),
+    name: nextTerminalName(project)
+  };
+  project.terminals.push(terminalTab);
+  project.expanded = true;
+  createSession(project, terminalTab);
+  renderSidebar();
+  await selectTerminal(project.id, terminalTab.id);
+}
+async function removeProject(projectId) {
+  const index = projects.findIndex((project2) => project2.id === projectId);
+  if (index < 0)
     return;
   const [project] = projects.splice(index, 1);
-  $list.children[index]?.remove();
-  destroySession(project);
+  hideActiveTerminal();
+  for (const terminalTab of project.terminals) {
+    destroySession(terminalTab.id);
+  }
   if (projects.length === 0) {
-    activeIndex = -1;
-    $empty.classList.remove("hidden");
+    activeProjectId = null;
+    activeTerminalId = null;
+    renderSidebar();
     save();
     return;
   }
-  const nextIdx = Math.min(index, projects.length - 1);
-  if (activeIndex === index) {
-    await selectProject(nextIdx);
-  } else {
-    if (activeIndex > index)
-      activeIndex--;
-    refreshListUI();
-    save();
+  if (activeProjectId === projectId) {
+    const next = projects[Math.min(index, projects.length - 1)];
+    activeProjectId = next.id;
+    activeTerminalId = null;
+  } else if (activeProjectId && !findProject(activeProjectId)) {
+    activeProjectId = projects[0].id;
+    activeTerminalId = null;
   }
+  renderSidebar();
+  save();
+}
+async function removeTerminal(projectId, terminalId) {
+  const project = findProject(projectId);
+  if (!project)
+    return;
+  const index = project.terminals.findIndex((terminal) => terminal.id === terminalId);
+  if (index < 0)
+    return;
+  const removingActive = activeTerminalId === terminalId;
+  project.terminals.splice(index, 1);
+  destroySession(terminalId);
+  if (removingActive) {
+    if (project.terminals.length > 0) {
+      const nextTerminal = project.terminals[Math.min(index, project.terminals.length - 1)];
+      renderSidebar();
+      await selectTerminal(project.id, nextTerminal.id);
+      return;
+    }
+    activeProjectId = project.id;
+    activeTerminalId = null;
+  } else {
+    if (activeProjectId === null)
+      activeProjectId = project.id;
+  }
+  renderSidebar();
+  save();
 }
 function save() {
-  window.minty.saveProjects({ projects, activeIndex });
+  window.minty.saveProjects({
+    projects,
+    activeProjectId,
+    activeTerminalId
+  });
 }
 function toggleSidebar() {
   sidebarVisible = !sidebarVisible;
@@ -6933,34 +7204,50 @@ function toggleSidebar() {
   setTimeout(() => refitActive(), 180);
 }
 function refitActive() {
-  if (activeIndex < 0 || activeIndex >= projects.length)
+  if (!activeTerminalId)
     return;
-  const project = projects[activeIndex];
-  const session = sessions.get(project.id);
+  const session = sessions.get(activeTerminalId);
   if (!session)
     return;
   try {
     session.fitAddon.fit();
-    window.minty.resizePty(project.id, session.terminal.cols, session.terminal.rows);
+    window.minty.resizePty(activeTerminalId, session.terminal.cols, session.terminal.rows);
   } catch {}
 }
 var resizeObserver = new ResizeObserver(() => refitActive());
 resizeObserver.observe($container);
+function sidebarItems() {
+  return Array.from($list.querySelectorAll(".project-row, .terminal-item"));
+}
+function activateSidebarItem(item) {
+  if (item.classList.contains("project-row")) {
+    const projectId = item.dataset.projectId;
+    if (projectId)
+      selectProject(projectId);
+    return;
+  }
+  if (item.classList.contains("terminal-item")) {
+    const projectId = item.dataset.projectId;
+    const terminalId = item.dataset.terminalId;
+    if (projectId && terminalId)
+      selectTerminal(projectId, terminalId);
+  }
+}
 function focusSidebar() {
   if (projects.length === 0)
     return;
-  const targetIdx = activeIndex >= 0 ? activeIndex : 0;
-  const item = $list.children[targetIdx];
+  const item = (activeTerminalId ? $list.querySelector(`.terminal-item[data-terminal-id="${activeTerminalId}"]`) : null) ?? (activeProjectId ? $list.querySelector(`.project-row[data-project-id="${activeProjectId}"]`) : null) ?? sidebarItems()[0];
   item?.focus();
 }
 function focusTerminal() {
-  if (activeIndex < 0)
+  if (!activeTerminalId)
     return;
-  sessions.get(projects[activeIndex].id)?.terminal.focus();
+  sessions.get(activeTerminalId)?.terminal.focus();
 }
 document.addEventListener("keydown", (e) => {
   const mod = e.metaKey || e.ctrlKey;
-  const inSidebar = document.activeElement?.classList.contains("project-item");
+  const focused = document.activeElement;
+  const inSidebar = focused?.classList.contains("project-row") || focused?.classList.contains("terminal-item") || false;
   if (mod) {
     switch (e.key) {
       case "n":
@@ -6971,8 +7258,11 @@ document.addEventListener("keydown", (e) => {
       case "w":
       case "W":
         e.preventDefault();
-        if (activeIndex >= 0)
-          removeProject(activeIndex);
+        if (activeProjectId && activeTerminalId) {
+          removeTerminal(activeProjectId, activeTerminalId);
+        } else if (activeProjectId) {
+          removeProject(activeProjectId);
+        }
         return;
       case "b":
       case "B":
@@ -6992,24 +7282,57 @@ document.addEventListener("keydown", (e) => {
     }
     if (e.key >= "1" && e.key <= "9") {
       e.preventDefault();
-      selectProject(parseInt(e.key) - 1);
+      const index = parseInt(e.key, 10) - 1;
+      const project = projects[index];
+      if (!project)
+        return;
+      if (project.terminals.length > 0) {
+        selectTerminal(project.id, project.terminals[0].id);
+      } else {
+        selectProject(project.id);
+      }
       return;
     }
   }
   if (inSidebar) {
-    const id = document.activeElement.dataset.projectId ?? "";
-    const idx = projects.findIndex((p) => p.id === id);
-    if (e.key === "ArrowDown" && idx < projects.length - 1) {
+    const items = sidebarItems();
+    const idx = focused ? items.indexOf(focused) : -1;
+    if (e.key === "ArrowDown" && idx >= 0 && idx < items.length - 1) {
       e.preventDefault();
-      $list.children[idx + 1]?.focus();
-      selectProject(idx + 1);
+      const target = items[idx + 1];
+      target.focus();
+      activateSidebarItem(target);
     } else if (e.key === "ArrowUp" && idx > 0) {
       e.preventDefault();
-      $list.children[idx - 1]?.focus();
-      selectProject(idx - 1);
+      const target = items[idx - 1];
+      target.focus();
+      activateSidebarItem(target);
+    } else if (e.key === "ArrowRight" && focused?.classList.contains("project-row")) {
+      const projectId = focused.dataset.projectId;
+      const project = projectId ? findProject(projectId) : undefined;
+      if (project && !project.expanded) {
+        e.preventDefault();
+        project.expanded = true;
+        renderSidebar();
+        const row = $list.querySelector(`.project-row[data-project-id="${project.id}"]`);
+        row?.focus();
+        save();
+      }
+    } else if (e.key === "ArrowLeft" && focused?.classList.contains("project-row")) {
+      const projectId = focused.dataset.projectId;
+      const project = projectId ? findProject(projectId) : undefined;
+      if (project && project.expanded) {
+        e.preventDefault();
+        project.expanded = false;
+        renderSidebar();
+        const row = $list.querySelector(`.project-row[data-project-id="${project.id}"]`);
+        row?.focus();
+        save();
+      }
     } else if (e.key === "Enter") {
       e.preventDefault();
-      focusTerminal();
+      if (focused)
+        activateSidebarItem(focused);
     }
   }
 });
@@ -7018,15 +7341,29 @@ async function init() {
   if (window.minty.platform === "darwin") {
     document.body.classList.add("macos");
   }
-  const data = await window.minty.loadProjects();
+  const data = normalizeLoadedData(await window.minty.loadProjects());
   projects = data.projects;
   for (const project of projects) {
-    $list.appendChild(renderItem(project));
-    createSession(project);
+    for (const terminalTab of project.terminals) {
+      createSession(project, terminalTab);
+    }
   }
-  if (projects.length > 0) {
-    const idx = data.activeIndex >= 0 && data.activeIndex < projects.length ? data.activeIndex : 0;
-    await selectProject(idx);
+  activeProjectId = data.activeProjectId;
+  activeTerminalId = data.activeTerminalId;
+  renderSidebar();
+  if (activeTerminalId) {
+    const owner = findProjectByTerminal(activeTerminalId);
+    if (owner) {
+      await selectTerminal(owner.id, activeTerminalId);
+      return;
+    }
+    activeTerminalId = null;
+  }
+  if (activeProjectId && findProject(activeProjectId)) {
+    await selectProject(activeProjectId);
+  } else {
+    activeProjectId = null;
+    updateEmptyState();
   }
 }
 init();

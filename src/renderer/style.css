@@ -111,7 +111,11 @@ body.macos #sidebar-header {
   background: #3a3a3a;
 }
 
-.project-item {
+.project-group {
+  list-style: none;
+}
+
+.project-row {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -125,41 +129,148 @@ body.macos #sidebar-header {
   overflow: hidden;
 }
 
-.project-item:hover {
+.project-row:hover {
   background: var(--bg-hover);
   color: var(--text);
 }
 
-.project-item.active {
+.project-row.active {
   background: var(--bg-active);
   color: var(--text);
 }
 
-/* Keyboard focus ring — only visible when navigating via keyboard */
-.project-item:focus-visible {
+.project-row.contains-active-terminal {
+  color: var(--text);
+}
+
+.project-row:focus-visible {
   box-shadow: 0 0 0 1px var(--accent);
 }
 
-.project-dot {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: var(--text-faint);
+.project-toggle {
+  width: 14px;
+  border: 0;
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 0;
+  line-height: 1;
   flex-shrink: 0;
-  transition: background var(--transition);
+  transition: color var(--transition);
 }
 
-.project-item.active .project-dot {
-  background: var(--accent);
-  box-shadow: 0 0 6px rgba(62, 207, 142, 0.5);
+.project-toggle:hover {
+  color: var(--text);
+}
+
+.project-folder-icon {
+  width: 14px;
+  height: 14px;
+  color: #8f939b;
+  flex-shrink: 0;
+}
+
+.project-actions {
+  margin-left: auto;
+  display: inline-flex;
+}
+
+.project-add-terminal {
+  width: 18px;
+  height: 18px;
+  border: 0;
+  border-radius: 4px;
+  color: var(--text-faint);
+  background: transparent;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  padding: 0;
+  transition: background var(--transition), color var(--transition);
+}
+
+.project-row:hover .project-add-terminal {
+  color: var(--text-dim);
+}
+
+.project-add-terminal:hover {
+  background: var(--bg-active);
+  color: var(--text);
 }
 
 .project-name {
+  flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 13px;
   line-height: 1;
+}
+
+.terminal-list {
+  list-style: none;
+  margin-left: 25px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 2px 0 5px;
+}
+
+.terminal-list.collapsed {
+  display: none;
+}
+
+.terminal-empty {
+  color: var(--text-faint);
+  font-size: 11px;
+  padding: 4px 8px;
+}
+
+.terminal-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: var(--radius);
+  color: #8f939b;
+  cursor: pointer;
+  outline: none;
+  transition: background var(--transition), color var(--transition);
+}
+
+.terminal-item:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.terminal-item.active {
+  background: var(--bg-active);
+  color: var(--text);
+}
+
+.terminal-item:focus-visible {
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.terminal-dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--text-faint);
+  flex-shrink: 0;
+}
+
+.terminal-item.active .terminal-dot {
+  background: var(--accent);
+  box-shadow: 0 0 5px rgba(62, 207, 142, 0.5);
+}
+
+.terminal-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
 }
 
 /* ── Sidebar footer ──────────────────────────────────────────────────────── */

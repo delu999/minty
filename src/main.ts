@@ -9,11 +9,19 @@ interface Project {
   id: string
   name: string
   path: string
+  terminals: TerminalTab[]
+  expanded?: boolean
+}
+
+interface TerminalTab {
+  id: string
+  name: string
 }
 
 interface ProjectsData {
   projects: Project[]
-  activeIndex: number
+  activeProjectId: string | null
+  activeTerminalId: string | null
 }
 
 // ── State ────────────────────────────────────────────────────────────────────
@@ -29,18 +37,18 @@ function buildPath(...parts: string[]): string {
 
 const dataFile = path.join(app.getPath("userData"), "projects.json")
 
-function loadProjects(): ProjectsData {
+function loadProjects(): unknown {
   try {
     if (fs.existsSync(dataFile)) {
-      return JSON.parse(fs.readFileSync(dataFile, "utf-8")) as ProjectsData
+      return JSON.parse(fs.readFileSync(dataFile, "utf-8"))
     }
   } catch (err) {
     console.error("Failed to load projects:", err)
   }
-  return { projects: [], activeIndex: -1 }
+  return { projects: [], activeProjectId: null, activeTerminalId: null } as ProjectsData
 }
 
-function saveProjects(data: ProjectsData): void {
+function saveProjects(data: unknown): void {
   try {
     fs.mkdirSync(path.dirname(dataFile), { recursive: true })
     fs.writeFileSync(dataFile, JSON.stringify(data, null, 2), "utf-8")
@@ -93,7 +101,7 @@ app.on("window-all-closed", () => {
 
 ipcMain.handle("projects:load", () => loadProjects())
 
-ipcMain.handle("projects:save", (_e, data: ProjectsData) => saveProjects(data))
+ipcMain.handle("projects:save", (_e, data: unknown) => saveProjects(data))
 
 // ── IPC: Dialog ───────────────────────────────────────────────────────────────
 

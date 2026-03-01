@@ -2,19 +2,32 @@ import { contextBridge, ipcRenderer } from "electron"
 
 // ── Exposed API shape ─────────────────────────────────────────────────────────
 
+interface TerminalTab {
+  id: string
+  name: string
+}
+
+interface Project {
+  id: string
+  name: string
+  path: string
+  terminals: TerminalTab[]
+  expanded?: boolean
+}
+
+interface ProjectsData {
+  projects: Project[]
+  activeProjectId: string | null
+  activeTerminalId: string | null
+}
+
 const minty = {
   platform: process.platform,
 
   // Persistence
-  loadProjects: () =>
-    ipcRenderer.invoke("projects:load") as Promise<{
-      projects: Array<{ id: string; name: string; path: string }>
-      activeIndex: number
-    }>,
-  saveProjects: (data: {
-    projects: Array<{ id: string; name: string; path: string }>
-    activeIndex: number
-  }) => ipcRenderer.invoke("projects:save", data) as Promise<void>,
+  loadProjects: () => ipcRenderer.invoke("projects:load") as Promise<unknown>,
+  saveProjects: (data: ProjectsData) =>
+    ipcRenderer.invoke("projects:save", data) as Promise<void>,
 
   // Native dialog
   openFolderDialog: () =>
