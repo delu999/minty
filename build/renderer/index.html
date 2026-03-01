@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Minty</title>
+    <link rel="stylesheet" href="xterm.css" />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <div id="app">
+      <aside id="sidebar">
+        <div id="sidebar-header">
+          <span id="sidebar-title">Projects</span>
+        </div>
+        <ul id="project-list" role="listbox" aria-label="Projects"></ul>
+        <div id="sidebar-footer">
+          <button id="add-btn" title="Add project (⌘N)">
+            <svg width="11" height="11" viewBox="0 0 11 11" fill="none" aria-hidden="true">
+              <path d="M5.5 1v9M1 5.5h9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+            </svg>
+            Add Project
+          </button>
+        </div>
+      </aside>
+
+      <main id="terminal-area">
+        <div id="terminals-container"></div>
+        <div id="empty-state">
+          <div class="empty-icon">
+            <svg width="32" height="32" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+              <rect x="4" y="6" width="24" height="20" rx="3" stroke="currentColor" stroke-width="1.5"/>
+              <path d="M10 13l4 3-4 3M17 19h5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+          <p class="empty-title">No project selected</p>
+          <p class="empty-hint">Click <kbd>⌘N</kbd> to add a project folder</p>
+        </div>
+      </main>
+    </div>
+
+    <script src="renderer.js" type="module"></script>
+  </body>
+</html>

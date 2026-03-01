@@ -1,0 +1,23 @@
+{
+  "name": "minty",
+  "version": "0.1.0",
+  "description": "A minimal terminal manager",
+  "main": "build/main.js",
+  "scripts": {
+    "build": "bun build.ts",
+    "dev": "bun run build && electron .",
+    "start": "electron .",
+    "rebuild": "electron-rebuild -f -w node-pty"
+  },
+  "dependencies": {
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/xterm": "^5.3.0",
+    "electron": "^29.4.0",
+    "node-pty": "^1.0.0"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "^3.6.0",
+    "@types/node": "^20.0.0",
+    "typescript": "^5.4.0"
+  }
+}
