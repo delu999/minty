@@ -39,6 +39,9 @@ var mainWindow = null;
 function buildPath(...parts) {
   return import_path.default.join(import_electron.app.getAppPath(), "build", ...parts);
 }
+var appTitle = "Minty";
+var appIconPath = buildPath("logo_minty.png");
+import_electron.app.setName(appTitle);
 var dataFile = import_path.default.join(import_electron.app.getPath("userData"), "projects.json");
 function loadProjects() {
   try {
@@ -64,7 +67,9 @@ function createWindow() {
     height: 780,
     minWidth: 480,
     minHeight: 300,
+    title: appTitle,
     backgroundColor: "#0f0f0f",
+    icon: import_fs.default.existsSync(appIconPath) ? appIconPath : undefined,
     titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
     webPreferences: {
       preload: buildPath("preload.js"),
@@ -79,6 +84,9 @@ function createWindow() {
   });
 }
 import_electron.app.whenReady().then(() => {
+  if (process.platform === "darwin" && import_fs.default.existsSync(appIconPath)) {
+    import_electron.app.dock?.setIcon(appIconPath);
+  }
   createWindow();
   import_electron.app.on("activate", () => {
     if (import_electron.BrowserWindow.getAllWindows().length === 0)

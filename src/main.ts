@@ -33,6 +33,11 @@ function buildPath(...parts: string[]): string {
   return path.join(app.getAppPath(), "build", ...parts)
 }
 
+const appTitle = "Minty"
+const appIconPath = buildPath("logo_minty.png")
+
+app.setName(appTitle)
+
 // ── Persistence ──────────────────────────────────────────────────────────────
 
 const dataFile = path.join(app.getPath("userData"), "projects.json")
@@ -65,7 +70,9 @@ function createWindow(): void {
     height: 780,
     minWidth: 480,
     minHeight: 300,
+    title: appTitle,
     backgroundColor: "#0f0f0f",
+    icon: fs.existsSync(appIconPath) ? appIconPath : undefined,
     titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
     webPreferences: {
       preload: buildPath("preload.js"),
@@ -83,6 +90,9 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
+  if (process.platform === "darwin" && fs.existsSync(appIconPath)) {
+    app.dock?.setIcon(appIconPath)
+  }
   createWindow()
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
