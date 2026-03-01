@@ -243,6 +243,20 @@ const TERMINAL_THEME = {
   selectionBackground: "rgba(122, 162, 247, 0.25)",
 } as const
 
+const TERMINAL_FONT_FAMILY = [
+  '"MesloLGS NF"',
+  '"JetBrainsMono Nerd Font Mono"',
+  '"FiraCode Nerd Font Mono"',
+  '"Hack Nerd Font Mono"',
+  '"CaskaydiaMono Nerd Font Mono"',
+  '"Symbols Nerd Font Mono"',
+  '"Menlo"',
+  '"Monaco"',
+  '"Cascadia Mono"',
+  '"Courier New"',
+  "monospace",
+].join(", ")
+
 // ── Session management ────────────────────────────────────────────────────────
 
 function createSession(project: Project, terminalTab: TerminalTab): TerminalSession {
@@ -255,7 +269,7 @@ function createSession(project: Project, terminalTab: TerminalTab): TerminalSess
 
   const terminal = new Terminal({
     theme: TERMINAL_THEME,
-    fontFamily: '"Menlo", "Monaco", "Cascadia Mono", "Courier New", monospace',
+    fontFamily: TERMINAL_FONT_FAMILY,
     fontSize: 13,
     lineHeight: 1.2,
     letterSpacing: 0,

@@ -6857,6 +6857,19 @@ var TERMINAL_THEME = {
   cursorAccent: "#0f0f0f",
   selectionBackground: "rgba(122, 162, 247, 0.25)"
 };
+var TERMINAL_FONT_FAMILY = [
+  '"MesloLGS NF"',
+  '"JetBrainsMono Nerd Font Mono"',
+  '"FiraCode Nerd Font Mono"',
+  '"Hack Nerd Font Mono"',
+  '"CaskaydiaMono Nerd Font Mono"',
+  '"Symbols Nerd Font Mono"',
+  '"Menlo"',
+  '"Monaco"',
+  '"Cascadia Mono"',
+  '"Courier New"',
+  "monospace"
+].join(", ");
 function createSession(project, terminalTab) {
   const wrapper = document.createElement("div");
   wrapper.className = "terminal-wrapper";
@@ -6865,7 +6878,7 @@ function createSession(project, terminalTab) {
   $container.appendChild(wrapper);
   const terminal = new import_xterm.Terminal({
     theme: TERMINAL_THEME,
-    fontFamily: '"Menlo", "Monaco", "Cascadia Mono", "Courier New", monospace',
+    fontFamily: TERMINAL_FONT_FAMILY,
     fontSize: 13,
     lineHeight: 1.2,
     letterSpacing: 0,
