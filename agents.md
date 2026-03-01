@@ -1,8 +1,8 @@
-# Minty — Codebase Reference for LLM Agents
+# Minty
 
 Minty is a cross-platform Electron desktop app: a two-panel terminal manager.
-Left sidebar lists saved project folders. Right panel shows a persistent shell
-session for the selected project.
+Left sidebar lists saved project folders and their terminal tabs. Right panel
+shows the currently selected terminal session.
 
 ---
 
@@ -68,13 +68,13 @@ Defined in `src/preload.ts`. Available as `window.minty` in the renderer.
 window.minty.platform                        // string — "darwin" | "win32" | "linux"
 
 // Persistence
-window.minty.loadProjects()                  // Promise<{ projects: Project[], activeIndex: number }>
+window.minty.loadProjects()                  // Promise<unknown> (renderer normalizes shape)
 window.minty.saveProjects(data)              // Promise<void>
 
 // Native dialog
 window.minty.openFolderDialog()              // Promise<string | null>  — absolute folder path
 
-// PTY lifecycle (all keyed by project id string)
+// PTY lifecycle (all keyed by terminal id string)
 window.minty.spawnPty(id, cwd)              // Promise<void> — spawns shell cd'd to cwd
 window.minty.writePty(id, data)             // Promise<void> — send keystrokes to shell
 window.minty.resizePty(id, cols, rows)      // Promise<void> — sync pty size to terminal
@@ -87,10 +87,26 @@ window.minty.onPtyExit(id, cb)             // registers one-shot exit listener, 
 
 **Project shape:**
 ```typescript
-interface Project { id: string; name: string; path: string }
+interface TerminalTab { id: string; name: string }
+interface Project {
+  id: string
+  name: string
+  path: string
+  terminals: TerminalTab[]
+  expanded?: boolean
+}
 ```
 `id` is generated in the renderer as `p_<timestamp>_<random>`.
 `name` is the last path segment of `path`.
+
+**Saved UI state shape:**
+```typescript
+interface ProjectsData {
+  projects: Project[]
+  activeProjectId: string | null
+  activeTerminalId: string | null
+}
+```
 
 ---
 
@@ -102,7 +118,7 @@ All main→renderer pushes use `webContents.send` (fire-and-forget).
 | Direction | Channel | Payload |
 |---|---|---|
 | R→M | `projects:load` | — |
-| R→M | `projects:save` | `{ projects, activeIndex }` |
+| R→M | `projects:save` | `{ projects, activeProjectId, activeTerminalId }` |
 | R→M | `dialog:open-folder` | — |
 | R→M | `pty:spawn` | `{ id, cwd }` |
 | R→M | `pty:write` | `{ id, data }` |
@@ -118,9 +134,10 @@ a corresponding wrapper in `src/preload.ts` inside the `minty` object.
 
 ## Terminal Session Lifecycle (renderer)
 
-Each `Project` has a `TerminalSession`:
+Each `TerminalTab` has a `TerminalSession`:
 ```typescript
 interface TerminalSession {
+  terminalId: string
   terminal: Terminal      // xterm.js instance
   fitAddon: FitAddon
   wrapper: HTMLElement    // the .terminal-wrapper div
@@ -131,16 +148,18 @@ interface TerminalSession {
 ```
 
 Key rules:
-- `createSession(project)` is called for every project at startup and whenever a
-  project is added. It mounts the xterm instance into the DOM immediately.
+- `addProject()` only adds a folder entry (`project.terminals` starts empty). No
+  terminal is opened or spawned yet.
+- `createSession(project, terminalTab)` is called for each existing terminal at
+  startup and whenever a new terminal tab is added with the `+` project action.
 - Wrappers are hidden with `display: none` (no `.active` class). The active one
   has `display: flex`. This means all terminals stay alive in the DOM — switching
   is instant with no reload or re-render.
-- `ensureSpawned(project, session)` is called on first selection. It calls
-  `window.minty.spawnPty` then wires up `onPtyData`. The `spawned` flag prevents
-  double-spawning.
-- `destroySession(project)` disposes the xterm instance, removes the DOM node,
-  and calls `killPty`. Called only on project removal.
+- `ensureSpawned(project, terminalTab, session)` is called on first terminal
+  selection. It calls `window.minty.spawnPty(terminalId, cwd)` then wires up
+  `onPtyData`. The `spawned` flag prevents double-spawning.
+- `destroySession(terminalId)` disposes the xterm instance, removes the DOM
+  node, and calls `killPty`. Called on terminal removal and project removal.
 - After making a wrapper active, `fitAddon.fit()` is called inside
   `requestAnimationFrame` so the DOM has settled. Then `resizePty` syncs the
   pty size.
@@ -152,14 +171,16 @@ Key rules:
 ## State (renderer module-level)
 
 ```typescript
-let projects: Project[]     // ordered list, index matches DOM order
-let activeIndex: number     // -1 when nothing selected
+let projects: Project[]     // ordered list
+let activeProjectId: string | null
+let activeTerminalId: string | null
 let sidebarVisible: boolean
-const sessions: Map<string, TerminalSession>  // keyed by project.id
+const sessions: Map<string, TerminalSession>  // keyed by terminal.id
 ```
 
-`save()` writes `{ projects, activeIndex }` via `window.minty.saveProjects` on
-every mutation (select, add, remove, sidebar toggle does not trigger save).
+`save()` writes `{ projects, activeProjectId, activeTerminalId }` via
+`window.minty.saveProjects` on every meaningful mutation (select, add, remove,
+expand/collapse; sidebar toggle does not trigger save).
 
 ---
 
@@ -168,14 +189,15 @@ every mutation (select, add, remove, sidebar toggle does not trigger save).
 | Shortcut | Action |
 |---|---|
 | `⌘/Ctrl+N` | Add project (open folder dialog) |
-| `⌘/Ctrl+W` | Remove active project |
+| `⌘/Ctrl+W` | Remove active terminal (if selected), else remove active project |
 | `⌘/Ctrl+B` | Toggle sidebar |
 | `⌘/Ctrl+K` | Focus sidebar (arrow-key navigation) |
 | `⌘/Ctrl+L` | Focus terminal |
-| `⌘/Ctrl+1`…`9` | Jump to project by index |
+| `⌘/Ctrl+1`…`9` | Jump to project by index (select first terminal if it exists) |
 | `↑` / `↓` | Navigate list when sidebar focused |
-| `Enter` | Focus terminal when sidebar focused |
-| Right-click project | Delete that project |
+| `←` / `→` | Collapse / expand focused project row |
+| `Enter` | Activate focused sidebar row (project or terminal) |
+| Right-click project/terminal | Non-destructive; keeps selection behavior only |
 
 Shortcuts work even when xterm has focus because each terminal has
 `attachCustomKeyEventHandler` returning `false` for the relevant keys, letting
