@@ -229,7 +229,7 @@ bun run build
 electron .
 ```
 
-`bun run rebuild` runs `electron-rebuild -f -w node-pty`.
+`bun run rebuild` runs `node scripts/rebuild-node-pty.cjs` (programmatic `@electron/rebuild`).
 This must be re-run whenever `electron` or `node-pty` versions change.
 
 ---

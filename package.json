@@ -9,8 +9,8 @@
     "build": "bun build.ts",
     "dev": "bun run build && electron .",
     "start": "electron .",
-    "postinstall": "electron-builder install-app-deps",
-    "rebuild": "electron-rebuild -f -w node-pty",
+    "postinstall": "node scripts/rebuild-node-pty.cjs",
+    "rebuild": "node scripts/rebuild-node-pty.cjs",
     "package:mac": "bun run build && electron-builder --mac zip"
   },
   "dependencies": {

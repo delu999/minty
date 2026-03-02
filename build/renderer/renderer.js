@@ -3,29 +3,15 @@ var __getProtoOf = Object.getPrototypeOf;
 var __defProp = Object.defineProperty;
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
-function __accessProp(key) {
-  return this[key];
-}
-var __toESMCache_node;
-var __toESMCache_esm;
 var __toESM = (mod, isNodeMode, target) => {
-  var canCache = mod != null && typeof mod === "object";
-  if (canCache) {
-    var cache = isNodeMode ? __toESMCache_node ??= new WeakMap : __toESMCache_esm ??= new WeakMap;
-    var cached = cache.get(mod);
-    if (cached)
-      return cached;
-  }
   target = mod != null ? __create(__getProtoOf(mod)) : {};
   const to = isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target;
   for (let key of __getOwnPropNames(mod))
     if (!__hasOwnProp.call(to, key))
       __defProp(to, key, {
-        get: __accessProp.bind(mod, key),
+        get: () => mod[key],
         enumerable: true
       });
-  if (canCache)
-    cache.set(mod, to);
   return to;
 };
 var __commonJS = (cb, mod) => () => (mod || cb((mod = { exports: {} }).exports, mod), mod.exports);
@@ -2604,12 +2590,12 @@ WARNING: This link could potentially be dangerous`)) {
       }
       t2.CircularList = n;
     }, 1439: (e2, t2) => {
-      Object.defineProperty(t2, "__esModule", { value: true }), t2.clone = undefined, t2.clone = function e3(t3, i2 = 5) {
+      Object.defineProperty(t2, "__esModule", { value: true }), t2.clone = undefined, t2.clone = function e(t3, i2 = 5) {
         if (typeof t3 != "object")
           return t3;
         const s2 = Array.isArray(t3) ? [] : {};
         for (const r in t3)
-          s2[r] = i2 <= 1 ? t3[r] : t3[r] && e3(t3[r], i2 - 1);
+          s2[r] = i2 <= 1 ? t3[r] : t3[r] && e(t3[r], i2 - 1);
         return s2;
       };
     }, 8055: (e2, t2) => {
