@@ -11,7 +11,7 @@ interface TerminalTab {
 interface Project {
   id: string
   name: string
-  path: string
+  path: string | null
   terminals: TerminalTab[]
   expanded?: boolean
 }
@@ -24,6 +24,7 @@ interface LegacyProject {
 
 interface ProjectsData {
   projects: Project[]
+  rootTerminals: TerminalTab[]
   activeProjectId: string | null
   activeTerminalId: string | null
 }
@@ -33,7 +34,7 @@ interface MintyAPI {
   loadProjects(): Promise<unknown>
   saveProjects(data: ProjectsData): Promise<void>
   openFolderDialog(): Promise<string | null>
-  spawnPty(id: string, cwd: string): Promise<void>
+  spawnPty(id: string, cwd?: string | null): Promise<void>
   writePty(id: string, data: string): Promise<void>
   resizePty(id: string, cols: number, rows: number): Promise<void>
   killPty(id: string): Promise<void>
@@ -59,21 +60,29 @@ interface TerminalSession {
   cleanupExit: (() => void) | null
 }
 
+type DragPayload =
+  | { type: "project"; projectId: string }
+  | { type: "terminal"; terminalId: string; sourceProjectId: string | null }
+
 // ── State ─────────────────────────────────────────────────────────────────────
 
 let projects: Project[] = []
+let rootTerminals: TerminalTab[] = []
 let activeProjectId: string | null = null
 let activeTerminalId: string | null = null
 let sidebarVisible = true
+let dragPayload: DragPayload | null = null
 const sessions = new Map<string, TerminalSession>()
 
 // ── DOM refs ──────────────────────────────────────────────────────────────────
 
-const $sidebar   = document.getElementById("sidebar")!
-const $list      = document.getElementById("project-list")!
-const $addBtn    = document.getElementById("add-btn")!
+const $sidebar = document.getElementById("sidebar")!
+const $list = document.getElementById("project-list")!
+const $addBtn = document.getElementById("add-btn")!
+const $newFolderBtn = document.getElementById("new-folder-btn")!
+const $newTerminalBtn = document.getElementById("new-terminal-btn")!
 const $container = document.getElementById("terminals-container")!
-const $empty     = document.getElementById("empty-state")!
+const $empty = document.getElementById("empty-state")!
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -94,6 +103,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object"
 }
 
+function parseProjectId(raw: string | undefined): string | null {
+  if (!raw || raw.trim().length === 0) return null
+  return raw
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value))
+}
+
 function findProject(projectId: string): Project | undefined {
   return projects.find((project) => project.id === projectId)
 }
@@ -106,16 +124,106 @@ function findTerminal(project: Project, terminalId: string): TerminalTab | undef
   return project.terminals.find((terminal) => terminal.id === terminalId)
 }
 
-function nextTerminalName(project: Project): string {
-  const used = new Set(project.terminals.map((terminal) => terminal.name))
+function findTerminalLocation(
+  terminalId: string,
+): { ownerProjectId: string | null; index: number; terminal: TerminalTab } | null {
+  const rootIndex = rootTerminals.findIndex((terminal) => terminal.id === terminalId)
+  if (rootIndex >= 0) {
+    return {
+      ownerProjectId: null,
+      index: rootIndex,
+      terminal: rootTerminals[rootIndex],
+    }
+  }
+
+  for (const project of projects) {
+    const index = project.terminals.findIndex((terminal) => terminal.id === terminalId)
+    if (index >= 0) {
+      return {
+        ownerProjectId: project.id,
+        index,
+        terminal: project.terminals[index],
+      }
+    }
+  }
+
+  return null
+}
+
+function findTerminalById(terminalId: string): TerminalTab | undefined {
+  return findTerminalLocation(terminalId)?.terminal
+}
+
+function getTerminalOwnerProjectId(terminalId: string): string | null | undefined {
+  return findTerminalLocation(terminalId)?.ownerProjectId
+}
+
+function getTerminalList(ownerProjectId: string | null): TerminalTab[] | null {
+  if (ownerProjectId === null) return rootTerminals
+  return findProject(ownerProjectId)?.terminals ?? null
+}
+
+function terminalExistsInData(terminalId: string, data: Project[], root: TerminalTab[]): boolean {
+  if (root.some((terminal) => terminal.id === terminalId)) return true
+  return data.some((project) => project.terminals.some((terminal) => terminal.id === terminalId))
+}
+
+function findProjectByTerminalIn(terminalId: string, data: Project[]): Project | undefined {
+  return data.find((project) => project.terminals.some((terminal) => terminal.id === terminalId))
+}
+
+function nextTerminalName(usedList: TerminalTab[]): string {
+  const used = new Set(usedList.map((terminal) => terminal.name))
   let index = 1
   while (used.has(`Terminal ${index}`)) index += 1
   return `Terminal ${index}`
 }
 
+function nextEmptyFolderName(): string {
+  const used = new Set(projects.map((project) => project.name))
+  let index = 1
+  while (used.has(`Folder ${index}`)) index += 1
+  return `Folder ${index}`
+}
+
+function cwdForProject(projectId: string | null): string | null {
+  if (!projectId) return null
+  return findProject(projectId)?.path ?? null
+}
+
+function isBeforeMidpoint(element: HTMLElement, clientY: number): boolean {
+  const rect = element.getBoundingClientRect()
+  return clientY < rect.top + rect.height / 2
+}
+
+function clearDragIndicators(): void {
+  for (const element of $list.querySelectorAll<HTMLElement>(
+    ".drag-over-before, .drag-over-after, .drag-over-inside, .drag-over-root",
+  )) {
+    element.classList.remove("drag-over-before", "drag-over-after", "drag-over-inside", "drag-over-root")
+  }
+}
+
+function setDragPayload(payload: DragPayload, event: DragEvent): void {
+  dragPayload = payload
+  if (!event.dataTransfer) return
+  event.dataTransfer.effectAllowed = "move"
+  event.dataTransfer.setData("text/plain", JSON.stringify(payload))
+}
+
+function clearDragState(): void {
+  dragPayload = null
+  clearDragIndicators()
+}
+
 function normalizeLoadedData(raw: unknown): ProjectsData {
   if (!isRecord(raw)) {
-    return { projects: [], activeProjectId: null, activeTerminalId: null }
+    return {
+      projects: [],
+      rootTerminals: [],
+      activeProjectId: null,
+      activeTerminalId: null,
+    }
   }
 
   const rawProjects = Array.isArray(raw.projects) ? raw.projects : []
@@ -123,7 +231,7 @@ function normalizeLoadedData(raw: unknown): ProjectsData {
 
   for (const item of rawProjects) {
     if (!isRecord(item)) continue
-    if (typeof item.id !== "string" || typeof item.name !== "string" || typeof item.path !== "string") continue
+    if (typeof item.id !== "string" || typeof item.name !== "string") continue
 
     let terminals: TerminalTab[] = []
     if (Array.isArray(item.terminals)) {
@@ -136,7 +244,7 @@ function normalizeLoadedData(raw: unknown): ProjectsData {
     normalizedProjects.push({
       id: item.id,
       name: item.name,
-      path: item.path,
+      path: typeof item.path === "string" ? item.path : null,
       terminals,
       expanded: typeof item.expanded === "boolean" ? item.expanded : true,
     })
@@ -163,6 +271,14 @@ function normalizeLoadedData(raw: unknown): ProjectsData {
     }
   }
 
+  let normalizedRootTerminals: TerminalTab[] = []
+  if (Array.isArray(raw.rootTerminals)) {
+    normalizedRootTerminals = raw.rootTerminals
+      .filter((terminal): terminal is Record<string, unknown> => isRecord(terminal))
+      .filter((terminal) => typeof terminal.id === "string" && typeof terminal.name === "string")
+      .map((terminal) => ({ id: terminal.id as string, name: terminal.name as string }))
+  }
+
   let nextActiveProjectId: string | null = null
   if (typeof raw.activeProjectId === "string" && normalizedProjects.some((project) => project.id === raw.activeProjectId)) {
     nextActiveProjectId = raw.activeProjectId
@@ -172,28 +288,28 @@ function normalizeLoadedData(raw: unknown): ProjectsData {
   }
 
   let nextActiveTerminalId: string | null = null
-  if (typeof raw.activeTerminalId === "string" && findProjectByTerminalIn(raw.activeTerminalId, normalizedProjects)) {
+  if (
+    typeof raw.activeTerminalId === "string" &&
+    terminalExistsInData(raw.activeTerminalId, normalizedProjects, normalizedRootTerminals)
+  ) {
     nextActiveTerminalId = raw.activeTerminalId
   }
 
   if (nextActiveTerminalId) {
     const owner = findProjectByTerminalIn(nextActiveTerminalId, normalizedProjects)
-    nextActiveProjectId = owner?.id ?? nextActiveProjectId
+    nextActiveProjectId = owner?.id ?? null
   }
 
-  if (!nextActiveProjectId && normalizedProjects.length > 0) {
+  if (!nextActiveProjectId && !nextActiveTerminalId && normalizedProjects.length > 0) {
     nextActiveProjectId = normalizedProjects[0].id
   }
 
   return {
     projects: normalizedProjects,
+    rootTerminals: normalizedRootTerminals,
     activeProjectId: nextActiveProjectId,
     activeTerminalId: nextActiveTerminalId,
   }
-}
-
-function findProjectByTerminalIn(terminalId: string, data: Project[]): Project | undefined {
-  return data.find((project) => project.terminals.some((terminal) => terminal.id === terminalId))
 }
 
 function updateEmptyState(): void {
@@ -210,36 +326,39 @@ function updateEmptyState(): void {
 
   if (activeProjectId) {
     title.textContent = "No terminal selected"
-    hint.textContent = "Use the + button next to the project name to open a terminal"
+    hint.textContent = "Use the + button next to the folder name to open a terminal"
+  } else if (projects.length === 0 && rootTerminals.length === 0) {
+    title.textContent = "No terminal selected"
+    hint.textContent = "Use New Terminal, New Empty Folder, or Add Project"
   } else {
-    title.textContent = "No project selected"
-    hint.textContent = "Click Cmd/Ctrl+N to add a project folder"
+    title.textContent = "No terminal selected"
+    hint.textContent = "Select a terminal from the sidebar"
   }
 }
 
 // ── Terminal theming ──────────────────────────────────────────────────────────
 
 const TERMINAL_THEME = {
-  background:       "#0f0f0f",
-  foreground:       "#c0caf5",
-  black:            "#15161e",
-  red:              "#f7768e",
-  green:            "#9ece6a",
-  yellow:           "#e0af68",
-  blue:             "#7aa2f7",
-  magenta:          "#bb9af7",
-  cyan:             "#7dcfff",
-  white:            "#a9b1d6",
-  brightBlack:      "#414868",
-  brightRed:        "#f7768e",
-  brightGreen:      "#9ece6a",
-  brightYellow:     "#e0af68",
-  brightBlue:       "#7aa2f7",
-  brightMagenta:    "#bb9af7",
-  brightCyan:       "#7dcfff",
-  brightWhite:      "#c0caf5",
-  cursor:           "#c0caf5",
-  cursorAccent:     "#0f0f0f",
+  background: "#0f0f0f",
+  foreground: "#c0caf5",
+  black: "#15161e",
+  red: "#f7768e",
+  green: "#9ece6a",
+  yellow: "#e0af68",
+  blue: "#7aa2f7",
+  magenta: "#bb9af7",
+  cyan: "#7dcfff",
+  white: "#a9b1d6",
+  brightBlack: "#414868",
+  brightRed: "#f7768e",
+  brightGreen: "#9ece6a",
+  brightYellow: "#e0af68",
+  brightBlue: "#7aa2f7",
+  brightMagenta: "#bb9af7",
+  brightCyan: "#7dcfff",
+  brightWhite: "#c0caf5",
+  cursor: "#c0caf5",
+  cursorAccent: "#0f0f0f",
   selectionBackground: "rgba(122, 162, 247, 0.25)",
 } as const
 
@@ -259,11 +378,9 @@ const TERMINAL_FONT_FAMILY = [
 
 // ── Session management ────────────────────────────────────────────────────────
 
-function createSession(project: Project, terminalTab: TerminalTab): TerminalSession {
-  // Container div for this terminal (hidden by default)
+function createSession(terminalTab: TerminalTab): TerminalSession {
   const wrapper = document.createElement("div")
   wrapper.className = "terminal-wrapper"
-  wrapper.dataset.projectId = project.id
   wrapper.dataset.terminalId = terminalTab.id
   $container.appendChild(wrapper)
 
@@ -290,17 +407,15 @@ function createSession(project: Project, terminalTab: TerminalTab): TerminalSess
     const mod = e.metaKey || e.ctrlKey
     if (!mod) return true
     const k = e.key
-    // Let these bubble to the document so our handler catches them
     if (k === "k" || k === "K") return false
     if (k === "n" || k === "N") return false
     if (k === "w" || k === "W") return false
     if (k === "b" || k === "B") return false
-    if (e.metaKey && (k === "l" || k === "L")) return false  // Cmd+L only — Ctrl+L stays for clear
+    if (e.metaKey && (k === "l" || k === "L")) return false
     if (k >= "1" && k <= "9") return false
     return true
   })
 
-  // Forward keyboard input to pty
   terminal.onData((data) => {
     void window.minty.writePty(terminalTab.id, data)
   })
@@ -314,26 +429,29 @@ function createSession(project: Project, terminalTab: TerminalTab): TerminalSess
     cleanupData: null,
     cleanupExit: null,
   }
+
   sessions.set(terminalTab.id, session)
   return session
 }
 
-function getOrCreateSession(project: Project, terminalTab: TerminalTab): TerminalSession {
-  return sessions.get(terminalTab.id) ?? createSession(project, terminalTab)
+function getOrCreateSession(terminalTab: TerminalTab): TerminalSession {
+  return sessions.get(terminalTab.id) ?? createSession(terminalTab)
 }
 
-async function ensureSpawned(project: Project, terminalTab: TerminalTab, session: TerminalSession): Promise<void> {
+async function ensureSpawned(terminalId: string, session: TerminalSession): Promise<void> {
   if (session.spawned) return
   session.spawned = true
 
-  await window.minty.spawnPty(terminalTab.id, project.path)
+  const ownerProjectId = getTerminalOwnerProjectId(terminalId)
+  const cwd = cwdForProject(ownerProjectId ?? null)
 
-  session.cleanupData = window.minty.onPtyData(terminalTab.id, (data) => {
+  await window.minty.spawnPty(terminalId, cwd)
+
+  session.cleanupData = window.minty.onPtyData(terminalId, (data) => {
     session.terminal.write(data)
   })
 
-  session.cleanupExit = window.minty.onPtyExit(terminalTab.id, () => {
-    // Shell exited — print a dim notice and allow re-spawn on next focus
+  session.cleanupExit = window.minty.onPtyExit(terminalId, () => {
     session.terminal.write("\r\n\x1b[2m[session ended — press any key to restart]\x1b[0m\r\n")
     session.spawned = false
     session.cleanupData?.()
@@ -343,20 +461,202 @@ async function ensureSpawned(project: Project, terminalTab: TerminalTab, session
 }
 
 function destroySession(terminalId: string): void {
-  const s = sessions.get(terminalId)
-  if (!s) return
-  s.cleanupData?.()
-  s.cleanupExit?.()
-  s.terminal.dispose()
-  s.wrapper.remove()
+  const session = sessions.get(terminalId)
+  if (!session) return
+  session.cleanupData?.()
+  session.cleanupExit?.()
+  session.terminal.dispose()
+  session.wrapper.remove()
   sessions.delete(terminalId)
   void window.minty.killPty(terminalId)
 }
 
 // ── Sidebar item rendering ────────────────────────────────────────────────────
 
+function makeTerminalItem(ownerProjectId: string | null, terminalTab: TerminalTab, topLevel: boolean): HTMLLIElement {
+  const terminalItem = document.createElement("li")
+  terminalItem.className = "terminal-item"
+  if (topLevel) terminalItem.classList.add("terminal-item-top-level")
+  terminalItem.role = "treeitem"
+  terminalItem.tabIndex = 0
+  terminalItem.dataset.projectId = ownerProjectId ?? ""
+  terminalItem.dataset.terminalId = terminalTab.id
+
+  const ownerName = ownerProjectId ? (findProject(ownerProjectId)?.name ?? "Folder") : "Standalone"
+  terminalItem.title = `${ownerName} · ${terminalTab.name}`
+
+  const dot = document.createElement("span")
+  dot.className = "terminal-dot"
+  const label = document.createElement("span")
+  label.className = "terminal-name"
+  label.textContent = terminalTab.name
+
+  terminalItem.append(dot, label)
+
+  terminalItem.addEventListener("click", () => {
+    void selectTerminal(ownerProjectId, terminalTab.id)
+  })
+
+  terminalItem.addEventListener("contextmenu", (event) => {
+    event.preventDefault()
+    event.stopPropagation()
+    void selectTerminal(ownerProjectId, terminalTab.id)
+  })
+
+  terminalItem.addEventListener("dblclick", (event) => {
+    event.preventDefault()
+    event.stopPropagation()
+    void renameTerminal(terminalTab.id)
+  })
+
+  terminalItem.draggable = true
+  terminalItem.addEventListener("dragstart", (event) => {
+    setDragPayload(
+      {
+        type: "terminal",
+        terminalId: terminalTab.id,
+        sourceProjectId: ownerProjectId,
+      },
+      event,
+    )
+  })
+
+  terminalItem.addEventListener("dragend", () => {
+    clearDragState()
+  })
+
+  terminalItem.addEventListener("dragover", (event) => {
+    if (!dragPayload || dragPayload.type !== "terminal") return
+    event.preventDefault()
+    clearDragIndicators()
+    if (isBeforeMidpoint(terminalItem, event.clientY)) {
+      terminalItem.classList.add("drag-over-before")
+    } else {
+      terminalItem.classList.add("drag-over-after")
+    }
+  })
+
+  terminalItem.addEventListener("dragleave", () => {
+    terminalItem.classList.remove("drag-over-before", "drag-over-after")
+  })
+
+  terminalItem.addEventListener("drop", (event) => {
+    if (!dragPayload || dragPayload.type !== "terminal") return
+    event.preventDefault()
+
+    const targetLocation = findTerminalLocation(terminalTab.id)
+    if (!targetLocation) {
+      clearDragState()
+      return
+    }
+
+    const before = isBeforeMidpoint(terminalItem, event.clientY)
+    const targetIndex = before ? targetLocation.index : targetLocation.index + 1
+    moveTerminal(dragPayload.terminalId, targetLocation.ownerProjectId, targetIndex)
+    clearDragState()
+  })
+
+  return terminalItem
+}
+
+function addProjectRowDropHandlers(row: HTMLElement, project: Project): void {
+  row.draggable = true
+
+  row.addEventListener("dragstart", (event) => {
+    setDragPayload({ type: "project", projectId: project.id }, event)
+  })
+
+  row.addEventListener("dragend", () => {
+    clearDragState()
+  })
+
+  row.addEventListener("dragover", (event) => {
+    if (!dragPayload) return
+
+    if (dragPayload.type === "project") {
+      event.preventDefault()
+      clearDragIndicators()
+      if (isBeforeMidpoint(row, event.clientY)) {
+        row.classList.add("drag-over-before")
+      } else {
+        row.classList.add("drag-over-after")
+      }
+      return
+    }
+
+    if (dragPayload.type === "terminal") {
+      event.preventDefault()
+      clearDragIndicators()
+      row.classList.add("drag-over-inside")
+    }
+  })
+
+  row.addEventListener("dragleave", () => {
+    row.classList.remove("drag-over-before", "drag-over-after", "drag-over-inside")
+  })
+
+  row.addEventListener("drop", (event) => {
+    if (!dragPayload) return
+    event.preventDefault()
+
+    if (dragPayload.type === "project") {
+      const before = isBeforeMidpoint(row, event.clientY)
+      reorderProject(dragPayload.projectId, project.id, !before)
+      clearDragState()
+      return
+    }
+
+    if (dragPayload.type === "terminal") {
+      moveTerminal(dragPayload.terminalId, project.id, null)
+      clearDragState()
+    }
+  })
+}
+
 function renderSidebar(): void {
   $list.innerHTML = ""
+
+  const rootGroup = document.createElement("li")
+  rootGroup.className = "standalone-group"
+
+  const rootTitle = document.createElement("div")
+  rootTitle.className = "standalone-title"
+  rootTitle.textContent = "Standalone Terminals"
+
+  const rootList = document.createElement("ul")
+  rootList.className = "terminal-root-list"
+
+  rootList.addEventListener("dragover", (event) => {
+    if (!dragPayload || dragPayload.type !== "terminal") return
+    event.preventDefault()
+    clearDragIndicators()
+    rootList.classList.add("drag-over-root")
+  })
+
+  rootList.addEventListener("dragleave", () => {
+    rootList.classList.remove("drag-over-root")
+  })
+
+  rootList.addEventListener("drop", (event) => {
+    if (!dragPayload || dragPayload.type !== "terminal") return
+    event.preventDefault()
+    moveTerminal(dragPayload.terminalId, null, null)
+    clearDragState()
+  })
+
+  if (rootTerminals.length === 0) {
+    const empty = document.createElement("li")
+    empty.className = "terminal-empty standalone-empty"
+    empty.textContent = "No standalone terminals"
+    rootList.appendChild(empty)
+  } else {
+    for (const terminalTab of rootTerminals) {
+      rootList.appendChild(makeTerminalItem(null, terminalTab, true))
+    }
+  }
+
+  rootGroup.append(rootTitle, rootList)
+  $list.appendChild(rootGroup)
 
   for (const project of projects) {
     const group = document.createElement("li")
@@ -367,16 +667,18 @@ function renderSidebar(): void {
     row.className = "project-row"
     row.role = "treeitem"
     row.tabIndex = 0
-    row.title = project.path
+    row.title = project.path ?? "Empty folder"
     row.dataset.projectId = project.id
+
+    addProjectRowDropHandlers(row, project)
 
     const toggle = document.createElement("button")
     toggle.type = "button"
     toggle.className = "project-toggle"
     toggle.textContent = project.expanded ? "▾" : "▸"
-    toggle.title = project.expanded ? "Collapse project" : "Expand project"
-    toggle.addEventListener("click", (e) => {
-      e.stopPropagation()
+    toggle.title = project.expanded ? "Collapse folder" : "Expand folder"
+    toggle.addEventListener("click", (event) => {
+      event.stopPropagation()
       project.expanded = !project.expanded
       renderSidebar()
       save()
@@ -402,8 +704,8 @@ function renderSidebar(): void {
     addTerminalBtn.className = "project-add-terminal"
     addTerminalBtn.title = "Open new terminal"
     addTerminalBtn.textContent = "+"
-    addTerminalBtn.addEventListener("click", (e) => {
-      e.stopPropagation()
+    addTerminalBtn.addEventListener("click", (event) => {
+      event.stopPropagation()
       void addTerminal(project.id)
     })
 
@@ -414,10 +716,9 @@ function renderSidebar(): void {
       void selectProject(project.id)
     })
 
-    // Keep right click non-destructive.
-    row.addEventListener("contextmenu", (e) => {
-      e.preventDefault()
-      e.stopPropagation()
+    row.addEventListener("contextmenu", (event) => {
+      event.preventDefault()
+      event.stopPropagation()
       void selectProject(project.id)
     })
 
@@ -433,34 +734,7 @@ function renderSidebar(): void {
       terminalList.appendChild(empty)
     } else {
       for (const terminalTab of project.terminals) {
-        const terminalItem = document.createElement("li")
-        terminalItem.className = "terminal-item"
-        terminalItem.role = "treeitem"
-        terminalItem.tabIndex = 0
-        terminalItem.dataset.projectId = project.id
-        terminalItem.dataset.terminalId = terminalTab.id
-        terminalItem.title = `${project.name} · ${terminalTab.name}`
-
-        const dot = document.createElement("span")
-        dot.className = "terminal-dot"
-        const label = document.createElement("span")
-        label.className = "terminal-name"
-        label.textContent = terminalTab.name
-
-        terminalItem.append(dot, label)
-
-        terminalItem.addEventListener("click", () => {
-          void selectTerminal(project.id, terminalTab.id)
-        })
-
-        // Keep right click non-destructive.
-        terminalItem.addEventListener("contextmenu", (e) => {
-          e.preventDefault()
-          e.stopPropagation()
-          void selectTerminal(project.id, terminalTab.id)
-        })
-
-        terminalList.appendChild(terminalItem)
+        terminalList.appendChild(makeTerminalItem(project.id, terminalTab, false))
       }
     }
 
@@ -487,7 +761,58 @@ function refreshListUI(): void {
   })
 }
 
-// ── Project selection ─────────────────────────────────────────────────────────
+// ── Data mutations ────────────────────────────────────────────────────────────
+
+function reorderProject(projectId: string, targetProjectId: string, placeAfter: boolean): void {
+  if (projectId === targetProjectId) return
+
+  const sourceIndex = projects.findIndex((project) => project.id === projectId)
+  const targetIndex = projects.findIndex((project) => project.id === targetProjectId)
+  if (sourceIndex < 0 || targetIndex < 0) return
+
+  const [project] = projects.splice(sourceIndex, 1)
+
+  let insertAt = targetIndex
+  if (sourceIndex < targetIndex) insertAt -= 1
+  if (placeAfter) insertAt += 1
+  insertAt = clamp(insertAt, 0, projects.length)
+
+  projects.splice(insertAt, 0, project)
+  renderSidebar()
+  save()
+}
+
+function moveTerminal(terminalId: string, targetProjectId: string | null, targetIndex: number | null): void {
+  const source = findTerminalLocation(terminalId)
+  const targetList = getTerminalList(targetProjectId)
+  if (!source || !targetList) return
+
+  const sourceList = getTerminalList(source.ownerProjectId)
+  if (!sourceList) return
+
+  sourceList.splice(source.index, 1)
+
+  let insertAt = targetIndex === null ? targetList.length : clamp(targetIndex, 0, targetList.length)
+  if (source.ownerProjectId === targetProjectId && insertAt > source.index) {
+    insertAt -= 1
+  }
+
+  targetList.splice(insertAt, 0, source.terminal)
+
+  if (targetProjectId) {
+    const destinationProject = findProject(targetProjectId)
+    if (destinationProject) destinationProject.expanded = true
+  }
+
+  if (activeTerminalId === terminalId) {
+    activeProjectId = targetProjectId
+  }
+
+  renderSidebar()
+  save()
+}
+
+// ── Project / terminal selection ──────────────────────────────────────────────
 
 function hideActiveTerminal(): void {
   if (!activeTerminalId) return
@@ -506,34 +831,43 @@ async function selectProject(projectId: string): Promise<void> {
   save()
 }
 
-async function selectTerminal(projectId: string, terminalId: string): Promise<void> {
-  const project = findProject(projectId)
-  if (!project) return
-  const terminalTab = findTerminal(project, terminalId)
+async function selectTerminal(projectId: string | null, terminalId: string): Promise<void> {
+  const ownerProjectId = getTerminalOwnerProjectId(terminalId)
+  if (ownerProjectId === undefined) return
+
+  const terminalTab = findTerminalById(terminalId)
   if (!terminalTab) return
 
   hideActiveTerminal()
-  activeProjectId = project.id
+  activeProjectId = ownerProjectId
   activeTerminalId = terminalTab.id
-  if (!project.expanded) {
-    project.expanded = true
-    renderSidebar()
+
+  if (ownerProjectId) {
+    const owner = findProject(ownerProjectId)
+    if (owner && !owner.expanded) {
+      owner.expanded = true
+      renderSidebar()
+    } else {
+      refreshListUI()
+      updateEmptyState()
+    }
   } else {
     refreshListUI()
     updateEmptyState()
   }
 
-  const session = getOrCreateSession(project, terminalTab)
+  const session = getOrCreateSession(terminalTab)
   session.wrapper.classList.add("active")
 
-  await ensureSpawned(project, terminalTab, session)
+  await ensureSpawned(terminalTab.id, session)
 
-  // Fit after layout paint
   requestAnimationFrame(() => {
     try {
       session.fitAddon.fit()
       void window.minty.resizePty(terminalTab.id, session.terminal.cols, session.terminal.rows)
-    } catch { /* not yet laid out */ }
+    } catch {
+      // not yet laid out
+    }
     session.terminal.focus()
   })
 
@@ -542,7 +876,7 @@ async function selectTerminal(projectId: string, terminalId: string): Promise<vo
   save()
 }
 
-// ── Add / Remove ──────────────────────────────────────────────────────────────
+// ── Add / Remove / Rename ────────────────────────────────────────────────────
 
 async function addProject(): Promise<void> {
   const folderPath = await window.minty.openFolderDialog()
@@ -570,20 +904,66 @@ async function addProject(): Promise<void> {
   save()
 }
 
+async function addEmptyFolder(): Promise<void> {
+  const project: Project = {
+    id: genProjectId(),
+    name: nextEmptyFolderName(),
+    path: null,
+    terminals: [],
+    expanded: true,
+  }
+
+  projects.push(project)
+  activeProjectId = project.id
+  activeTerminalId = null
+
+  renderSidebar()
+  save()
+}
+
+async function addStandaloneTerminal(): Promise<void> {
+  const terminalTab: TerminalTab = {
+    id: genTerminalId(),
+    name: nextTerminalName(rootTerminals),
+  }
+
+  rootTerminals.push(terminalTab)
+  createSession(terminalTab)
+
+  renderSidebar()
+  await selectTerminal(null, terminalTab.id)
+}
+
 async function addTerminal(projectId: string): Promise<void> {
   const project = findProject(projectId)
   if (!project) return
 
   const terminalTab: TerminalTab = {
     id: genTerminalId(),
-    name: nextTerminalName(project),
+    name: nextTerminalName(project.terminals),
   }
+
   project.terminals.push(terminalTab)
   project.expanded = true
-  createSession(project, terminalTab)
+  createSession(terminalTab)
 
   renderSidebar()
   await selectTerminal(project.id, terminalTab.id)
+}
+
+async function renameTerminal(terminalId: string): Promise<void> {
+  const target = findTerminalById(terminalId)
+  if (!target) return
+
+  const nextName = window.prompt("Rename terminal", target.name)
+  if (nextName === null) return
+
+  const trimmed = nextName.trim()
+  if (!trimmed || trimmed === target.name) return
+
+  target.name = trimmed
+  renderSidebar()
+  save()
 }
 
 async function removeProject(projectId: string): Promise<void> {
@@ -591,55 +971,53 @@ async function removeProject(projectId: string): Promise<void> {
   if (index < 0) return
 
   const [project] = projects.splice(index, 1)
-  hideActiveTerminal()
+
+  const removedTerminalIds = new Set(project.terminals.map((terminal) => terminal.id))
+  if (activeTerminalId && removedTerminalIds.has(activeTerminalId)) {
+    hideActiveTerminal()
+    activeTerminalId = null
+  }
+
   for (const terminalTab of project.terminals) {
     destroySession(terminalTab.id)
   }
 
-  if (projects.length === 0) {
-    activeProjectId = null
-    activeTerminalId = null
-    renderSidebar()
-    save()
-    return
-  }
-
   if (activeProjectId === projectId) {
-    const next = projects[Math.min(index, projects.length - 1)]
-    activeProjectId = next.id
-    activeTerminalId = null
-  } else if (activeProjectId && !findProject(activeProjectId)) {
-    activeProjectId = projects[0].id
-    activeTerminalId = null
+    activeProjectId = projects[Math.min(index, projects.length - 1)]?.id ?? null
   }
 
   renderSidebar()
   save()
 }
 
-async function removeTerminal(projectId: string, terminalId: string): Promise<void> {
-  const project = findProject(projectId)
-  if (!project) return
+async function removeTerminal(projectId: string | null, terminalId: string): Promise<void> {
+  const location = findTerminalLocation(terminalId)
+  if (!location) return
+  if (location.ownerProjectId !== projectId) return
 
-  const index = project.terminals.findIndex((terminal) => terminal.id === terminalId)
-  if (index < 0) return
+  const list = getTerminalList(location.ownerProjectId)
+  if (!list) return
 
   const removingActive = activeTerminalId === terminalId
-  project.terminals.splice(index, 1)
+  list.splice(location.index, 1)
   destroySession(terminalId)
 
   if (removingActive) {
-    if (project.terminals.length > 0) {
-      const nextTerminal = project.terminals[Math.min(index, project.terminals.length - 1)]
+    hideActiveTerminal()
+
+    if (list.length > 0) {
+      const nextTerminal = list[Math.min(location.index, list.length - 1)]
       renderSidebar()
-      await selectTerminal(project.id, nextTerminal.id)
+      await selectTerminal(location.ownerProjectId, nextTerminal.id)
       return
     }
 
-    activeProjectId = project.id
     activeTerminalId = null
-  } else {
-    if (activeProjectId === null) activeProjectId = project.id
+    if (location.ownerProjectId) {
+      activeProjectId = location.ownerProjectId
+    } else {
+      activeProjectId = projects[0]?.id ?? null
+    }
   }
 
   renderSidebar()
@@ -651,6 +1029,7 @@ async function removeTerminal(projectId: string, terminalId: string): Promise<vo
 function save(): void {
   void window.minty.saveProjects({
     projects,
+    rootTerminals,
     activeProjectId,
     activeTerminalId,
   })
@@ -661,7 +1040,6 @@ function save(): void {
 function toggleSidebar(): void {
   sidebarVisible = !sidebarVisible
   $sidebar.classList.toggle("collapsed", !sidebarVisible)
-  // Refit after the CSS transition finishes
   setTimeout(() => refitActive(), 180)
 }
 
@@ -674,7 +1052,9 @@ function refitActive(): void {
   try {
     session.fitAddon.fit()
     void window.minty.resizePty(activeTerminalId, session.terminal.cols, session.terminal.rows)
-  } catch { /* ignore if not ready */ }
+  } catch {
+    // ignore if not ready
+  }
 }
 
 const resizeObserver = new ResizeObserver(() => refitActive())
@@ -694,14 +1074,13 @@ function activateSidebarItem(item: HTMLElement): void {
   }
 
   if (item.classList.contains("terminal-item")) {
-    const projectId = item.dataset.projectId
+    const projectId = parseProjectId(item.dataset.projectId)
     const terminalId = item.dataset.terminalId
-    if (projectId && terminalId) void selectTerminal(projectId, terminalId)
+    if (terminalId) void selectTerminal(projectId, terminalId)
   }
 }
 
 function focusSidebar(): void {
-  if (projects.length === 0) return
   const item =
     (activeTerminalId
       ? $list.querySelector<HTMLElement>(`.terminal-item[data-terminal-id="${activeTerminalId}"]`)
@@ -720,8 +1099,8 @@ function focusTerminal(): void {
 
 // ── Keyboard shortcuts ────────────────────────────────────────────────────────
 
-document.addEventListener("keydown", (e) => {
-  const mod = e.metaKey || e.ctrlKey
+document.addEventListener("keydown", (event) => {
+  const mod = event.metaKey || event.ctrlKey
   const focused = document.activeElement as HTMLElement | null
   const inSidebar =
     focused?.classList.contains("project-row") ||
@@ -729,29 +1108,47 @@ document.addEventListener("keydown", (e) => {
     false
 
   if (mod) {
-    switch (e.key) {
-      case "n": case "N":
-        e.preventDefault(); void addProject(); return
-      case "w": case "W":
-        e.preventDefault()
-        if (activeProjectId && activeTerminalId) {
-          void removeTerminal(activeProjectId, activeTerminalId)
+    switch (event.key) {
+      case "n":
+      case "N":
+        event.preventDefault()
+        void addProject()
+        return
+      case "w":
+      case "W":
+        event.preventDefault()
+        if (activeTerminalId) {
+          const ownerProjectId = getTerminalOwnerProjectId(activeTerminalId)
+          if (ownerProjectId !== undefined) {
+            void removeTerminal(ownerProjectId, activeTerminalId)
+          }
         } else if (activeProjectId) {
           void removeProject(activeProjectId)
         }
         return
-      case "b": case "B":
-        e.preventDefault(); toggleSidebar(); return
-      case "k": case "K":
-        e.preventDefault(); focusSidebar(); return
-      case "l": case "L":
-        e.preventDefault(); focusTerminal(); return
+      case "b":
+      case "B":
+        event.preventDefault()
+        toggleSidebar()
+        return
+      case "k":
+      case "K":
+        event.preventDefault()
+        focusSidebar()
+        return
+      case "l":
+      case "L":
+        event.preventDefault()
+        focusTerminal()
+        return
     }
-    if (e.key >= "1" && e.key <= "9") {
-      e.preventDefault()
-      const index = parseInt(e.key, 10) - 1
+
+    if (event.key >= "1" && event.key <= "9") {
+      event.preventDefault()
+      const index = parseInt(event.key, 10) - 1
       const project = projects[index]
       if (!project) return
+
       if (project.terminals.length > 0) {
         void selectTerminal(project.id, project.terminals[0].id)
       } else {
@@ -761,53 +1158,54 @@ document.addEventListener("keydown", (e) => {
     }
   }
 
-  // Arrow navigation while sidebar item is focused
   if (inSidebar) {
     const items = sidebarItems()
     const idx = focused ? items.indexOf(focused) : -1
 
-    if (e.key === "ArrowDown" && idx >= 0 && idx < items.length - 1) {
-      e.preventDefault()
+    if (event.key === "ArrowDown" && idx >= 0 && idx < items.length - 1) {
+      event.preventDefault()
       const target = items[idx + 1]
       target.focus()
       activateSidebarItem(target)
-    } else if (e.key === "ArrowUp" && idx > 0) {
-      e.preventDefault()
+    } else if (event.key === "ArrowUp" && idx > 0) {
+      event.preventDefault()
       const target = items[idx - 1]
       target.focus()
       activateSidebarItem(target)
-    } else if (e.key === "ArrowRight" && focused?.classList.contains("project-row")) {
+    } else if (event.key === "ArrowRight" && focused?.classList.contains("project-row")) {
       const projectId = focused.dataset.projectId
       const project = projectId ? findProject(projectId) : undefined
       if (project && !project.expanded) {
-        e.preventDefault()
+        event.preventDefault()
         project.expanded = true
         renderSidebar()
         const row = $list.querySelector<HTMLElement>(`.project-row[data-project-id="${project.id}"]`)
         row?.focus()
         save()
       }
-    } else if (e.key === "ArrowLeft" && focused?.classList.contains("project-row")) {
+    } else if (event.key === "ArrowLeft" && focused?.classList.contains("project-row")) {
       const projectId = focused.dataset.projectId
       const project = projectId ? findProject(projectId) : undefined
       if (project && project.expanded) {
-        e.preventDefault()
+        event.preventDefault()
         project.expanded = false
         renderSidebar()
         const row = $list.querySelector<HTMLElement>(`.project-row[data-project-id="${project.id}"]`)
         row?.focus()
         save()
       }
-    } else if (e.key === "Enter") {
-      e.preventDefault()
+    } else if (event.key === "Enter") {
+      event.preventDefault()
       if (focused) activateSidebarItem(focused)
     }
   }
 })
 
-// ── Button ────────────────────────────────────────────────────────────────────
+// ── Buttons ───────────────────────────────────────────────────────────────────
 
 $addBtn.addEventListener("click", () => void addProject())
+$newFolderBtn.addEventListener("click", () => void addEmptyFolder())
+$newTerminalBtn.addEventListener("click", () => void addStandaloneTerminal())
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 
@@ -818,11 +1216,14 @@ async function init(): Promise<void> {
 
   const data = normalizeLoadedData(await window.minty.loadProjects())
   projects = data.projects
+  rootTerminals = data.rootTerminals
 
-  // Render all projects and pre-create terminal wrappers for existing tabs.
+  for (const terminalTab of rootTerminals) {
+    createSession(terminalTab)
+  }
   for (const project of projects) {
     for (const terminalTab of project.terminals) {
-      createSession(project, terminalTab)
+      createSession(terminalTab)
     }
   }
 
@@ -832,9 +1233,9 @@ async function init(): Promise<void> {
   renderSidebar()
 
   if (activeTerminalId) {
-    const owner = findProjectByTerminal(activeTerminalId)
-    if (owner) {
-      await selectTerminal(owner.id, activeTerminalId)
+    const ownerProjectId = getTerminalOwnerProjectId(activeTerminalId)
+    if (ownerProjectId !== undefined) {
+      await selectTerminal(ownerProjectId, activeTerminalId)
       return
     }
     activeTerminalId = null

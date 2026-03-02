@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog } from "electron"
+import { app, BrowserWindow, ipcMain, dialog, screen } from "electron"
 import path from "path"
 import fs from "fs"
 import * as pty from "node-pty"
@@ -8,7 +8,7 @@ import * as pty from "node-pty"
 interface Project {
   id: string
   name: string
-  path: string
+  path: string | null
   terminals: TerminalTab[]
   expanded?: boolean
 }
@@ -20,6 +20,7 @@ interface TerminalTab {
 
 interface ProjectsData {
   projects: Project[]
+  rootTerminals: TerminalTab[]
   activeProjectId: string | null
   activeTerminalId: string | null
 }
@@ -50,7 +51,12 @@ function loadProjects(): unknown {
   } catch (err) {
     console.error("Failed to load projects:", err)
   }
-  return { projects: [], activeProjectId: null, activeTerminalId: null } as ProjectsData
+  return {
+    projects: [],
+    rootTerminals: [],
+    activeProjectId: null,
+    activeTerminalId: null,
+  } as ProjectsData
 }
 
 function saveProjects(data: unknown): void {
@@ -65,11 +71,13 @@ function saveProjects(data: unknown): void {
 // ── Window ───────────────────────────────────────────────────────────────────
 
 function createWindow(): void {
+  const { width, height } = screen.getPrimaryDisplay().workAreaSize
   mainWindow = new BrowserWindow({
-    width: 1200,
-    height: 780,
+    width,
+    height,
     minWidth: 480,
     minHeight: 300,
+    resizable: true,
     title: appTitle,
     backgroundColor: "#0f0f0f",
     icon: fs.existsSync(appIconPath) ? appIconPath : undefined,
@@ -83,6 +91,7 @@ function createWindow(): void {
   })
 
   mainWindow.loadFile(buildPath("renderer", "index.html"))
+  mainWindow.maximize()
 
   mainWindow.on("closed", () => {
     mainWindow = null
@@ -127,7 +136,7 @@ ipcMain.handle("dialog:open-folder", async () => {
 
 // ── IPC: PTY ──────────────────────────────────────────────────────────────────
 
-ipcMain.handle("pty:spawn", (_e, { id, cwd }: { id: string; cwd: string }) => {
+ipcMain.handle("pty:spawn", (_e, { id, cwd }: { id: string; cwd?: string | null }) => {
   if (ptyProcesses.has(id)) return // already running
 
   const shell =
@@ -143,11 +152,16 @@ ipcMain.handle("pty:spawn", (_e, { id, cwd }: { id: string; cwd: string }) => {
   env["TERM"] = "xterm-256color"
   env["COLORTERM"] = "truecolor"
 
+  const spawnCwd =
+    typeof cwd === "string" && cwd.trim().length > 0
+      ? cwd
+      : app.getPath("home")
+
   const ptyProcess = pty.spawn(shell, [], {
     name: "xterm-256color",
     cols: 80,
     rows: 24,
-    cwd,
+    cwd: spawnCwd,
     env,
   })
 

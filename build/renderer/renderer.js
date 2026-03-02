@@ -3,15 +3,29 @@ var __getProtoOf = Object.getPrototypeOf;
 var __defProp = Object.defineProperty;
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
+function __accessProp(key) {
+  return this[key];
+}
+var __toESMCache_node;
+var __toESMCache_esm;
 var __toESM = (mod, isNodeMode, target) => {
+  var canCache = mod != null && typeof mod === "object";
+  if (canCache) {
+    var cache = isNodeMode ? __toESMCache_node ??= new WeakMap : __toESMCache_esm ??= new WeakMap;
+    var cached = cache.get(mod);
+    if (cached)
+      return cached;
+  }
   target = mod != null ? __create(__getProtoOf(mod)) : {};
   const to = isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target;
   for (let key of __getOwnPropNames(mod))
     if (!__hasOwnProp.call(to, key))
       __defProp(to, key, {
-        get: () => mod[key],
+        get: __accessProp.bind(mod, key),
         enumerable: true
       });
+  if (canCache)
+    cache.set(mod, to);
   return to;
 };
 var __commonJS = (cb, mod) => () => (mod || cb((mod = { exports: {} }).exports, mod), mod.exports);
@@ -2590,12 +2604,12 @@ WARNING: This link could potentially be dangerous`)) {
       }
       t2.CircularList = n;
     }, 1439: (e2, t2) => {
-      Object.defineProperty(t2, "__esModule", { value: true }), t2.clone = undefined, t2.clone = function e(t3, i2 = 5) {
+      Object.defineProperty(t2, "__esModule", { value: true }), t2.clone = undefined, t2.clone = function e3(t3, i2 = 5) {
         if (typeof t3 != "object")
           return t3;
         const s2 = Array.isArray(t3) ? [] : {};
         for (const r in t3)
-          s2[r] = i2 <= 1 ? t3[r] : t3[r] && e(t3[r], i2 - 1);
+          s2[r] = i2 <= 1 ? t3[r] : t3[r] && e3(t3[r], i2 - 1);
         return s2;
       };
     }, 8055: (e2, t2) => {
@@ -6700,13 +6714,17 @@ var require_addon_fit = __commonJS((exports, module) => {
 var import_xterm = __toESM(require_xterm(), 1);
 var import_addon_fit = __toESM(require_addon_fit(), 1);
 var projects = [];
+var rootTerminals = [];
 var activeProjectId = null;
 var activeTerminalId = null;
 var sidebarVisible = true;
+var dragPayload = null;
 var sessions = new Map;
 var $sidebar = document.getElementById("sidebar");
 var $list = document.getElementById("project-list");
 var $addBtn = document.getElementById("add-btn");
+var $newFolderBtn = document.getElementById("new-folder-btn");
+var $newTerminalBtn = document.getElementById("new-terminal-btn");
 var $container = document.getElementById("terminals-container");
 var $empty = document.getElementById("empty-state");
 function genProjectId() {
@@ -6722,32 +6740,111 @@ function baseName(p) {
 function isRecord(value) {
   return value !== null && typeof value === "object";
 }
+function parseProjectId(raw) {
+  if (!raw || raw.trim().length === 0)
+    return null;
+  return raw;
+}
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
 function findProject(projectId) {
   return projects.find((project) => project.id === projectId);
 }
-function findProjectByTerminal(terminalId) {
-  return projects.find((project) => project.terminals.some((terminal) => terminal.id === terminalId));
+function findTerminalLocation(terminalId) {
+  const rootIndex = rootTerminals.findIndex((terminal) => terminal.id === terminalId);
+  if (rootIndex >= 0) {
+    return {
+      ownerProjectId: null,
+      index: rootIndex,
+      terminal: rootTerminals[rootIndex]
+    };
+  }
+  for (const project of projects) {
+    const index = project.terminals.findIndex((terminal) => terminal.id === terminalId);
+    if (index >= 0) {
+      return {
+        ownerProjectId: project.id,
+        index,
+        terminal: project.terminals[index]
+      };
+    }
+  }
+  return null;
 }
-function findTerminal(project, terminalId) {
-  return project.terminals.find((terminal) => terminal.id === terminalId);
+function findTerminalById(terminalId) {
+  return findTerminalLocation(terminalId)?.terminal;
 }
-function nextTerminalName(project) {
-  const used = new Set(project.terminals.map((terminal) => terminal.name));
+function getTerminalOwnerProjectId(terminalId) {
+  return findTerminalLocation(terminalId)?.ownerProjectId;
+}
+function getTerminalList(ownerProjectId) {
+  if (ownerProjectId === null)
+    return rootTerminals;
+  return findProject(ownerProjectId)?.terminals ?? null;
+}
+function terminalExistsInData(terminalId, data, root) {
+  if (root.some((terminal) => terminal.id === terminalId))
+    return true;
+  return data.some((project) => project.terminals.some((terminal) => terminal.id === terminalId));
+}
+function findProjectByTerminalIn(terminalId, data) {
+  return data.find((project) => project.terminals.some((terminal) => terminal.id === terminalId));
+}
+function nextTerminalName(usedList) {
+  const used = new Set(usedList.map((terminal) => terminal.name));
   let index = 1;
   while (used.has(`Terminal ${index}`))
     index += 1;
   return `Terminal ${index}`;
 }
+function nextEmptyFolderName() {
+  const used = new Set(projects.map((project) => project.name));
+  let index = 1;
+  while (used.has(`Folder ${index}`))
+    index += 1;
+  return `Folder ${index}`;
+}
+function cwdForProject(projectId) {
+  if (!projectId)
+    return null;
+  return findProject(projectId)?.path ?? null;
+}
+function isBeforeMidpoint(element, clientY) {
+  const rect = element.getBoundingClientRect();
+  return clientY < rect.top + rect.height / 2;
+}
+function clearDragIndicators() {
+  for (const element of $list.querySelectorAll(".drag-over-before, .drag-over-after, .drag-over-inside, .drag-over-root")) {
+    element.classList.remove("drag-over-before", "drag-over-after", "drag-over-inside", "drag-over-root");
+  }
+}
+function setDragPayload(payload, event) {
+  dragPayload = payload;
+  if (!event.dataTransfer)
+    return;
+  event.dataTransfer.effectAllowed = "move";
+  event.dataTransfer.setData("text/plain", JSON.stringify(payload));
+}
+function clearDragState() {
+  dragPayload = null;
+  clearDragIndicators();
+}
 function normalizeLoadedData(raw) {
   if (!isRecord(raw)) {
-    return { projects: [], activeProjectId: null, activeTerminalId: null };
+    return {
+      projects: [],
+      rootTerminals: [],
+      activeProjectId: null,
+      activeTerminalId: null
+    };
   }
   const rawProjects = Array.isArray(raw.projects) ? raw.projects : [];
   const normalizedProjects = [];
   for (const item of rawProjects) {
     if (!isRecord(item))
       continue;
-    if (typeof item.id !== "string" || typeof item.name !== "string" || typeof item.path !== "string")
+    if (typeof item.id !== "string" || typeof item.name !== "string")
       continue;
     let terminals = [];
     if (Array.isArray(item.terminals)) {
@@ -6756,7 +6853,7 @@ function normalizeLoadedData(raw) {
     normalizedProjects.push({
       id: item.id,
       name: item.name,
-      path: item.path,
+      path: typeof item.path === "string" ? item.path : null,
       terminals,
       expanded: typeof item.expanded === "boolean" ? item.expanded : true
     });
@@ -6775,6 +6872,10 @@ function normalizeLoadedData(raw) {
       }
     }
   }
+  let normalizedRootTerminals = [];
+  if (Array.isArray(raw.rootTerminals)) {
+    normalizedRootTerminals = raw.rootTerminals.filter((terminal) => isRecord(terminal)).filter((terminal) => typeof terminal.id === "string" && typeof terminal.name === "string").map((terminal) => ({ id: terminal.id, name: terminal.name }));
+  }
   let nextActiveProjectId = null;
   if (typeof raw.activeProjectId === "string" && normalizedProjects.some((project) => project.id === raw.activeProjectId)) {
     nextActiveProjectId = raw.activeProjectId;
@@ -6783,24 +6884,22 @@ function normalizeLoadedData(raw) {
     nextActiveProjectId = byIndex?.id ?? null;
   }
   let nextActiveTerminalId = null;
-  if (typeof raw.activeTerminalId === "string" && findProjectByTerminalIn(raw.activeTerminalId, normalizedProjects)) {
+  if (typeof raw.activeTerminalId === "string" && terminalExistsInData(raw.activeTerminalId, normalizedProjects, normalizedRootTerminals)) {
     nextActiveTerminalId = raw.activeTerminalId;
   }
   if (nextActiveTerminalId) {
     const owner = findProjectByTerminalIn(nextActiveTerminalId, normalizedProjects);
-    nextActiveProjectId = owner?.id ?? nextActiveProjectId;
+    nextActiveProjectId = owner?.id ?? null;
   }
-  if (!nextActiveProjectId && normalizedProjects.length > 0) {
+  if (!nextActiveProjectId && !nextActiveTerminalId && normalizedProjects.length > 0) {
     nextActiveProjectId = normalizedProjects[0].id;
   }
   return {
     projects: normalizedProjects,
+    rootTerminals: normalizedRootTerminals,
     activeProjectId: nextActiveProjectId,
     activeTerminalId: nextActiveTerminalId
   };
-}
-function findProjectByTerminalIn(terminalId, data) {
-  return data.find((project) => project.terminals.some((terminal) => terminal.id === terminalId));
 }
 function updateEmptyState() {
   const title = $empty.querySelector(".empty-title");
@@ -6814,10 +6913,13 @@ function updateEmptyState() {
     return;
   if (activeProjectId) {
     title.textContent = "No terminal selected";
-    hint.textContent = "Use the + button next to the project name to open a terminal";
+    hint.textContent = "Use the + button next to the folder name to open a terminal";
+  } else if (projects.length === 0 && rootTerminals.length === 0) {
+    title.textContent = "No terminal selected";
+    hint.textContent = "Use New Terminal, New Empty Folder, or Add Project";
   } else {
-    title.textContent = "No project selected";
-    hint.textContent = "Click Cmd/Ctrl+N to add a project folder";
+    title.textContent = "No terminal selected";
+    hint.textContent = "Select a terminal from the sidebar";
   }
 }
 var TERMINAL_THEME = {
@@ -6856,10 +6958,9 @@ var TERMINAL_FONT_FAMILY = [
   '"Courier New"',
   "monospace"
 ].join(", ");
-function createSession(project, terminalTab) {
+function createSession(terminalTab) {
   const wrapper = document.createElement("div");
   wrapper.className = "terminal-wrapper";
-  wrapper.dataset.projectId = project.id;
   wrapper.dataset.terminalId = terminalTab.id;
   $container.appendChild(wrapper);
   const terminal = new import_xterm.Terminal({
@@ -6913,18 +7014,20 @@ function createSession(project, terminalTab) {
   sessions.set(terminalTab.id, session);
   return session;
 }
-function getOrCreateSession(project, terminalTab) {
-  return sessions.get(terminalTab.id) ?? createSession(project, terminalTab);
+function getOrCreateSession(terminalTab) {
+  return sessions.get(terminalTab.id) ?? createSession(terminalTab);
 }
-async function ensureSpawned(project, terminalTab, session) {
+async function ensureSpawned(terminalId, session) {
   if (session.spawned)
     return;
   session.spawned = true;
-  await window.minty.spawnPty(terminalTab.id, project.path);
-  session.cleanupData = window.minty.onPtyData(terminalTab.id, (data) => {
+  const ownerProjectId = getTerminalOwnerProjectId(terminalId);
+  const cwd = cwdForProject(ownerProjectId ?? null);
+  await window.minty.spawnPty(terminalId, cwd);
+  session.cleanupData = window.minty.onPtyData(terminalId, (data) => {
     session.terminal.write(data);
   });
-  session.cleanupExit = window.minty.onPtyExit(terminalTab.id, () => {
+  session.cleanupExit = window.minty.onPtyExit(terminalId, () => {
     session.terminal.write(`\r
 \x1B[2m[session ended — press any key to restart]\x1B[0m\r
 `);
@@ -6935,18 +7038,171 @@ async function ensureSpawned(project, terminalTab, session) {
   });
 }
 function destroySession(terminalId) {
-  const s = sessions.get(terminalId);
-  if (!s)
+  const session = sessions.get(terminalId);
+  if (!session)
     return;
-  s.cleanupData?.();
-  s.cleanupExit?.();
-  s.terminal.dispose();
-  s.wrapper.remove();
+  session.cleanupData?.();
+  session.cleanupExit?.();
+  session.terminal.dispose();
+  session.wrapper.remove();
   sessions.delete(terminalId);
   window.minty.killPty(terminalId);
 }
+function makeTerminalItem(ownerProjectId, terminalTab, topLevel) {
+  const terminalItem = document.createElement("li");
+  terminalItem.className = "terminal-item";
+  if (topLevel)
+    terminalItem.classList.add("terminal-item-top-level");
+  terminalItem.role = "treeitem";
+  terminalItem.tabIndex = 0;
+  terminalItem.dataset.projectId = ownerProjectId ?? "";
+  terminalItem.dataset.terminalId = terminalTab.id;
+  const ownerName = ownerProjectId ? findProject(ownerProjectId)?.name ?? "Folder" : "Standalone";
+  terminalItem.title = `${ownerName} · ${terminalTab.name}`;
+  const dot = document.createElement("span");
+  dot.className = "terminal-dot";
+  const label = document.createElement("span");
+  label.className = "terminal-name";
+  label.textContent = terminalTab.name;
+  terminalItem.append(dot, label);
+  terminalItem.addEventListener("click", () => {
+    selectTerminal(ownerProjectId, terminalTab.id);
+  });
+  terminalItem.addEventListener("contextmenu", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    selectTerminal(ownerProjectId, terminalTab.id);
+  });
+  terminalItem.addEventListener("dblclick", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    renameTerminal(terminalTab.id);
+  });
+  terminalItem.draggable = true;
+  terminalItem.addEventListener("dragstart", (event) => {
+    setDragPayload({
+      type: "terminal",
+      terminalId: terminalTab.id,
+      sourceProjectId: ownerProjectId
+    }, event);
+  });
+  terminalItem.addEventListener("dragend", () => {
+    clearDragState();
+  });
+  terminalItem.addEventListener("dragover", (event) => {
+    if (!dragPayload || dragPayload.type !== "terminal")
+      return;
+    event.preventDefault();
+    clearDragIndicators();
+    if (isBeforeMidpoint(terminalItem, event.clientY)) {
+      terminalItem.classList.add("drag-over-before");
+    } else {
+      terminalItem.classList.add("drag-over-after");
+    }
+  });
+  terminalItem.addEventListener("dragleave", () => {
+    terminalItem.classList.remove("drag-over-before", "drag-over-after");
+  });
+  terminalItem.addEventListener("drop", (event) => {
+    if (!dragPayload || dragPayload.type !== "terminal")
+      return;
+    event.preventDefault();
+    const targetLocation = findTerminalLocation(terminalTab.id);
+    if (!targetLocation) {
+      clearDragState();
+      return;
+    }
+    const before = isBeforeMidpoint(terminalItem, event.clientY);
+    const targetIndex = before ? targetLocation.index : targetLocation.index + 1;
+    moveTerminal(dragPayload.terminalId, targetLocation.ownerProjectId, targetIndex);
+    clearDragState();
+  });
+  return terminalItem;
+}
+function addProjectRowDropHandlers(row, project) {
+  row.draggable = true;
+  row.addEventListener("dragstart", (event) => {
+    setDragPayload({ type: "project", projectId: project.id }, event);
+  });
+  row.addEventListener("dragend", () => {
+    clearDragState();
+  });
+  row.addEventListener("dragover", (event) => {
+    if (!dragPayload)
+      return;
+    if (dragPayload.type === "project") {
+      event.preventDefault();
+      clearDragIndicators();
+      if (isBeforeMidpoint(row, event.clientY)) {
+        row.classList.add("drag-over-before");
+      } else {
+        row.classList.add("drag-over-after");
+      }
+      return;
+    }
+    if (dragPayload.type === "terminal") {
+      event.preventDefault();
+      clearDragIndicators();
+      row.classList.add("drag-over-inside");
+    }
+  });
+  row.addEventListener("dragleave", () => {
+    row.classList.remove("drag-over-before", "drag-over-after", "drag-over-inside");
+  });
+  row.addEventListener("drop", (event) => {
+    if (!dragPayload)
+      return;
+    event.preventDefault();
+    if (dragPayload.type === "project") {
+      const before = isBeforeMidpoint(row, event.clientY);
+      reorderProject(dragPayload.projectId, project.id, !before);
+      clearDragState();
+      return;
+    }
+    if (dragPayload.type === "terminal") {
+      moveTerminal(dragPayload.terminalId, project.id, null);
+      clearDragState();
+    }
+  });
+}
 function renderSidebar() {
   $list.innerHTML = "";
+  const rootGroup = document.createElement("li");
+  rootGroup.className = "standalone-group";
+  const rootTitle = document.createElement("div");
+  rootTitle.className = "standalone-title";
+  rootTitle.textContent = "Standalone Terminals";
+  const rootList = document.createElement("ul");
+  rootList.className = "terminal-root-list";
+  rootList.addEventListener("dragover", (event) => {
+    if (!dragPayload || dragPayload.type !== "terminal")
+      return;
+    event.preventDefault();
+    clearDragIndicators();
+    rootList.classList.add("drag-over-root");
+  });
+  rootList.addEventListener("dragleave", () => {
+    rootList.classList.remove("drag-over-root");
+  });
+  rootList.addEventListener("drop", (event) => {
+    if (!dragPayload || dragPayload.type !== "terminal")
+      return;
+    event.preventDefault();
+    moveTerminal(dragPayload.terminalId, null, null);
+    clearDragState();
+  });
+  if (rootTerminals.length === 0) {
+    const empty = document.createElement("li");
+    empty.className = "terminal-empty standalone-empty";
+    empty.textContent = "No standalone terminals";
+    rootList.appendChild(empty);
+  } else {
+    for (const terminalTab of rootTerminals) {
+      rootList.appendChild(makeTerminalItem(null, terminalTab, true));
+    }
+  }
+  rootGroup.append(rootTitle, rootList);
+  $list.appendChild(rootGroup);
   for (const project of projects) {
     const group = document.createElement("li");
     group.className = "project-group";
@@ -6955,15 +7211,16 @@ function renderSidebar() {
     row.className = "project-row";
     row.role = "treeitem";
     row.tabIndex = 0;
-    row.title = project.path;
+    row.title = project.path ?? "Empty folder";
     row.dataset.projectId = project.id;
+    addProjectRowDropHandlers(row, project);
     const toggle = document.createElement("button");
     toggle.type = "button";
     toggle.className = "project-toggle";
     toggle.textContent = project.expanded ? "▾" : "▸";
-    toggle.title = project.expanded ? "Collapse project" : "Expand project";
-    toggle.addEventListener("click", (e) => {
-      e.stopPropagation();
+    toggle.title = project.expanded ? "Collapse folder" : "Expand folder";
+    toggle.addEventListener("click", (event) => {
+      event.stopPropagation();
       project.expanded = !project.expanded;
       renderSidebar();
       save();
@@ -6985,8 +7242,8 @@ function renderSidebar() {
     addTerminalBtn.className = "project-add-terminal";
     addTerminalBtn.title = "Open new terminal";
     addTerminalBtn.textContent = "+";
-    addTerminalBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
+    addTerminalBtn.addEventListener("click", (event) => {
+      event.stopPropagation();
       addTerminal(project.id);
     });
     actions.appendChild(addTerminalBtn);
@@ -6994,9 +7251,9 @@ function renderSidebar() {
     row.addEventListener("click", () => {
       selectProject(project.id);
     });
-    row.addEventListener("contextmenu", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
+    row.addEventListener("contextmenu", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
       selectProject(project.id);
     });
     const terminalList = document.createElement("ul");
@@ -7011,28 +7268,7 @@ function renderSidebar() {
       terminalList.appendChild(empty);
     } else {
       for (const terminalTab of project.terminals) {
-        const terminalItem = document.createElement("li");
-        terminalItem.className = "terminal-item";
-        terminalItem.role = "treeitem";
-        terminalItem.tabIndex = 0;
-        terminalItem.dataset.projectId = project.id;
-        terminalItem.dataset.terminalId = terminalTab.id;
-        terminalItem.title = `${project.name} · ${terminalTab.name}`;
-        const dot = document.createElement("span");
-        dot.className = "terminal-dot";
-        const label = document.createElement("span");
-        label.className = "terminal-name";
-        label.textContent = terminalTab.name;
-        terminalItem.append(dot, label);
-        terminalItem.addEventListener("click", () => {
-          selectTerminal(project.id, terminalTab.id);
-        });
-        terminalItem.addEventListener("contextmenu", (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          selectTerminal(project.id, terminalTab.id);
-        });
-        terminalList.appendChild(terminalItem);
+        terminalList.appendChild(makeTerminalItem(project.id, terminalTab, false));
       }
     }
     group.append(row, terminalList);
@@ -7054,6 +7290,49 @@ function refreshListUI() {
     item.classList.toggle("active", terminalId === activeTerminalId);
   });
 }
+function reorderProject(projectId, targetProjectId, placeAfter) {
+  if (projectId === targetProjectId)
+    return;
+  const sourceIndex = projects.findIndex((project2) => project2.id === projectId);
+  const targetIndex = projects.findIndex((project2) => project2.id === targetProjectId);
+  if (sourceIndex < 0 || targetIndex < 0)
+    return;
+  const [project] = projects.splice(sourceIndex, 1);
+  let insertAt = targetIndex;
+  if (sourceIndex < targetIndex)
+    insertAt -= 1;
+  if (placeAfter)
+    insertAt += 1;
+  insertAt = clamp(insertAt, 0, projects.length);
+  projects.splice(insertAt, 0, project);
+  renderSidebar();
+  save();
+}
+function moveTerminal(terminalId, targetProjectId, targetIndex) {
+  const source = findTerminalLocation(terminalId);
+  const targetList = getTerminalList(targetProjectId);
+  if (!source || !targetList)
+    return;
+  const sourceList = getTerminalList(source.ownerProjectId);
+  if (!sourceList)
+    return;
+  sourceList.splice(source.index, 1);
+  let insertAt = targetIndex === null ? targetList.length : clamp(targetIndex, 0, targetList.length);
+  if (source.ownerProjectId === targetProjectId && insertAt > source.index) {
+    insertAt -= 1;
+  }
+  targetList.splice(insertAt, 0, source.terminal);
+  if (targetProjectId) {
+    const destinationProject = findProject(targetProjectId);
+    if (destinationProject)
+      destinationProject.expanded = true;
+  }
+  if (activeTerminalId === terminalId) {
+    activeProjectId = targetProjectId;
+  }
+  renderSidebar();
+  save();
+}
 function hideActiveTerminal() {
   if (!activeTerminalId)
     return;
@@ -7071,25 +7350,31 @@ async function selectProject(projectId) {
   save();
 }
 async function selectTerminal(projectId, terminalId) {
-  const project = findProject(projectId);
-  if (!project)
+  const ownerProjectId = getTerminalOwnerProjectId(terminalId);
+  if (ownerProjectId === undefined)
     return;
-  const terminalTab = findTerminal(project, terminalId);
+  const terminalTab = findTerminalById(terminalId);
   if (!terminalTab)
     return;
   hideActiveTerminal();
-  activeProjectId = project.id;
+  activeProjectId = ownerProjectId;
   activeTerminalId = terminalTab.id;
-  if (!project.expanded) {
-    project.expanded = true;
-    renderSidebar();
+  if (ownerProjectId) {
+    const owner = findProject(ownerProjectId);
+    if (owner && !owner.expanded) {
+      owner.expanded = true;
+      renderSidebar();
+    } else {
+      refreshListUI();
+      updateEmptyState();
+    }
   } else {
     refreshListUI();
     updateEmptyState();
   }
-  const session = getOrCreateSession(project, terminalTab);
+  const session = getOrCreateSession(terminalTab);
   session.wrapper.classList.add("active");
-  await ensureSpawned(project, terminalTab, session);
+  await ensureSpawned(terminalTab.id, session);
   requestAnimationFrame(() => {
     try {
       session.fitAddon.fit();
@@ -7123,69 +7408,103 @@ async function addProject() {
   renderSidebar();
   save();
 }
+async function addEmptyFolder() {
+  const project = {
+    id: genProjectId(),
+    name: nextEmptyFolderName(),
+    path: null,
+    terminals: [],
+    expanded: true
+  };
+  projects.push(project);
+  activeProjectId = project.id;
+  activeTerminalId = null;
+  renderSidebar();
+  save();
+}
+async function addStandaloneTerminal() {
+  const terminalTab = {
+    id: genTerminalId(),
+    name: nextTerminalName(rootTerminals)
+  };
+  rootTerminals.push(terminalTab);
+  createSession(terminalTab);
+  renderSidebar();
+  await selectTerminal(null, terminalTab.id);
+}
 async function addTerminal(projectId) {
   const project = findProject(projectId);
   if (!project)
     return;
   const terminalTab = {
     id: genTerminalId(),
-    name: nextTerminalName(project)
+    name: nextTerminalName(project.terminals)
   };
   project.terminals.push(terminalTab);
   project.expanded = true;
-  createSession(project, terminalTab);
+  createSession(terminalTab);
   renderSidebar();
   await selectTerminal(project.id, terminalTab.id);
+}
+async function renameTerminal(terminalId) {
+  const target = findTerminalById(terminalId);
+  if (!target)
+    return;
+  const nextName = window.prompt("Rename terminal", target.name);
+  if (nextName === null)
+    return;
+  const trimmed = nextName.trim();
+  if (!trimmed || trimmed === target.name)
+    return;
+  target.name = trimmed;
+  renderSidebar();
+  save();
 }
 async function removeProject(projectId) {
   const index = projects.findIndex((project2) => project2.id === projectId);
   if (index < 0)
     return;
   const [project] = projects.splice(index, 1);
-  hideActiveTerminal();
+  const removedTerminalIds = new Set(project.terminals.map((terminal) => terminal.id));
+  if (activeTerminalId && removedTerminalIds.has(activeTerminalId)) {
+    hideActiveTerminal();
+    activeTerminalId = null;
+  }
   for (const terminalTab of project.terminals) {
     destroySession(terminalTab.id);
   }
-  if (projects.length === 0) {
-    activeProjectId = null;
-    activeTerminalId = null;
-    renderSidebar();
-    save();
-    return;
-  }
   if (activeProjectId === projectId) {
-    const next = projects[Math.min(index, projects.length - 1)];
-    activeProjectId = next.id;
-    activeTerminalId = null;
-  } else if (activeProjectId && !findProject(activeProjectId)) {
-    activeProjectId = projects[0].id;
-    activeTerminalId = null;
+    activeProjectId = projects[Math.min(index, projects.length - 1)]?.id ?? null;
   }
   renderSidebar();
   save();
 }
 async function removeTerminal(projectId, terminalId) {
-  const project = findProject(projectId);
-  if (!project)
+  const location = findTerminalLocation(terminalId);
+  if (!location)
     return;
-  const index = project.terminals.findIndex((terminal) => terminal.id === terminalId);
-  if (index < 0)
+  if (location.ownerProjectId !== projectId)
+    return;
+  const list = getTerminalList(location.ownerProjectId);
+  if (!list)
     return;
   const removingActive = activeTerminalId === terminalId;
-  project.terminals.splice(index, 1);
+  list.splice(location.index, 1);
   destroySession(terminalId);
   if (removingActive) {
-    if (project.terminals.length > 0) {
-      const nextTerminal = project.terminals[Math.min(index, project.terminals.length - 1)];
+    hideActiveTerminal();
+    if (list.length > 0) {
+      const nextTerminal = list[Math.min(location.index, list.length - 1)];
       renderSidebar();
-      await selectTerminal(project.id, nextTerminal.id);
+      await selectTerminal(location.ownerProjectId, nextTerminal.id);
       return;
     }
-    activeProjectId = project.id;
     activeTerminalId = null;
-  } else {
-    if (activeProjectId === null)
-      activeProjectId = project.id;
+    if (location.ownerProjectId) {
+      activeProjectId = location.ownerProjectId;
+    } else {
+      activeProjectId = projects[0]?.id ?? null;
+    }
   }
   renderSidebar();
   save();
@@ -7193,6 +7512,7 @@ async function removeTerminal(projectId, terminalId) {
 function save() {
   window.minty.saveProjects({
     projects,
+    rootTerminals,
     activeProjectId,
     activeTerminalId
   });
@@ -7226,15 +7546,13 @@ function activateSidebarItem(item) {
     return;
   }
   if (item.classList.contains("terminal-item")) {
-    const projectId = item.dataset.projectId;
+    const projectId = parseProjectId(item.dataset.projectId);
     const terminalId = item.dataset.terminalId;
-    if (projectId && terminalId)
+    if (terminalId)
       selectTerminal(projectId, terminalId);
   }
 }
 function focusSidebar() {
-  if (projects.length === 0)
-    return;
   const item = (activeTerminalId ? $list.querySelector(`.terminal-item[data-terminal-id="${activeTerminalId}"]`) : null) ?? (activeProjectId ? $list.querySelector(`.project-row[data-project-id="${activeProjectId}"]`) : null) ?? sidebarItems()[0];
   item?.focus();
 }
@@ -7243,45 +7561,48 @@ function focusTerminal() {
     return;
   sessions.get(activeTerminalId)?.terminal.focus();
 }
-document.addEventListener("keydown", (e) => {
-  const mod = e.metaKey || e.ctrlKey;
+document.addEventListener("keydown", (event) => {
+  const mod = event.metaKey || event.ctrlKey;
   const focused = document.activeElement;
   const inSidebar = focused?.classList.contains("project-row") || focused?.classList.contains("terminal-item") || false;
   if (mod) {
-    switch (e.key) {
+    switch (event.key) {
       case "n":
       case "N":
-        e.preventDefault();
+        event.preventDefault();
         addProject();
         return;
       case "w":
       case "W":
-        e.preventDefault();
-        if (activeProjectId && activeTerminalId) {
-          removeTerminal(activeProjectId, activeTerminalId);
+        event.preventDefault();
+        if (activeTerminalId) {
+          const ownerProjectId = getTerminalOwnerProjectId(activeTerminalId);
+          if (ownerProjectId !== undefined) {
+            removeTerminal(ownerProjectId, activeTerminalId);
+          }
         } else if (activeProjectId) {
           removeProject(activeProjectId);
         }
         return;
       case "b":
       case "B":
-        e.preventDefault();
+        event.preventDefault();
         toggleSidebar();
         return;
       case "k":
       case "K":
-        e.preventDefault();
+        event.preventDefault();
         focusSidebar();
         return;
       case "l":
       case "L":
-        e.preventDefault();
+        event.preventDefault();
         focusTerminal();
         return;
     }
-    if (e.key >= "1" && e.key <= "9") {
-      e.preventDefault();
-      const index = parseInt(e.key, 10) - 1;
+    if (event.key >= "1" && event.key <= "9") {
+      event.preventDefault();
+      const index = parseInt(event.key, 10) - 1;
       const project = projects[index];
       if (!project)
         return;
@@ -7296,64 +7617,70 @@ document.addEventListener("keydown", (e) => {
   if (inSidebar) {
     const items = sidebarItems();
     const idx = focused ? items.indexOf(focused) : -1;
-    if (e.key === "ArrowDown" && idx >= 0 && idx < items.length - 1) {
-      e.preventDefault();
+    if (event.key === "ArrowDown" && idx >= 0 && idx < items.length - 1) {
+      event.preventDefault();
       const target = items[idx + 1];
       target.focus();
       activateSidebarItem(target);
-    } else if (e.key === "ArrowUp" && idx > 0) {
-      e.preventDefault();
+    } else if (event.key === "ArrowUp" && idx > 0) {
+      event.preventDefault();
       const target = items[idx - 1];
       target.focus();
       activateSidebarItem(target);
-    } else if (e.key === "ArrowRight" && focused?.classList.contains("project-row")) {
+    } else if (event.key === "ArrowRight" && focused?.classList.contains("project-row")) {
       const projectId = focused.dataset.projectId;
       const project = projectId ? findProject(projectId) : undefined;
       if (project && !project.expanded) {
-        e.preventDefault();
+        event.preventDefault();
         project.expanded = true;
         renderSidebar();
         const row = $list.querySelector(`.project-row[data-project-id="${project.id}"]`);
         row?.focus();
         save();
       }
-    } else if (e.key === "ArrowLeft" && focused?.classList.contains("project-row")) {
+    } else if (event.key === "ArrowLeft" && focused?.classList.contains("project-row")) {
       const projectId = focused.dataset.projectId;
       const project = projectId ? findProject(projectId) : undefined;
       if (project && project.expanded) {
-        e.preventDefault();
+        event.preventDefault();
         project.expanded = false;
         renderSidebar();
         const row = $list.querySelector(`.project-row[data-project-id="${project.id}"]`);
         row?.focus();
         save();
       }
-    } else if (e.key === "Enter") {
-      e.preventDefault();
+    } else if (event.key === "Enter") {
+      event.preventDefault();
       if (focused)
         activateSidebarItem(focused);
     }
   }
 });
 $addBtn.addEventListener("click", () => void addProject());
+$newFolderBtn.addEventListener("click", () => void addEmptyFolder());
+$newTerminalBtn.addEventListener("click", () => void addStandaloneTerminal());
 async function init() {
   if (window.minty.platform === "darwin") {
     document.body.classList.add("macos");
   }
   const data = normalizeLoadedData(await window.minty.loadProjects());
   projects = data.projects;
+  rootTerminals = data.rootTerminals;
+  for (const terminalTab of rootTerminals) {
+    createSession(terminalTab);
+  }
   for (const project of projects) {
     for (const terminalTab of project.terminals) {
-      createSession(project, terminalTab);
+      createSession(terminalTab);
     }
   }
   activeProjectId = data.activeProjectId;
   activeTerminalId = data.activeTerminalId;
   renderSidebar();
   if (activeTerminalId) {
-    const owner = findProjectByTerminal(activeTerminalId);
-    if (owner) {
-      await selectTerminal(owner.id, activeTerminalId);
+    const ownerProjectId = getTerminalOwnerProjectId(activeTerminalId);
+    if (ownerProjectId !== undefined) {
+      await selectTerminal(ownerProjectId, activeTerminalId);
       return;
     }
     activeTerminalId = null;

@@ -10,13 +10,14 @@ interface TerminalTab {
 interface Project {
   id: string
   name: string
-  path: string
+  path: string | null
   terminals: TerminalTab[]
   expanded?: boolean
 }
 
 interface ProjectsData {
   projects: Project[]
+  rootTerminals: TerminalTab[]
   activeProjectId: string | null
   activeTerminalId: string | null
 }
@@ -34,7 +35,7 @@ const minty = {
     ipcRenderer.invoke("dialog:open-folder") as Promise<string | null>,
 
   // PTY management
-  spawnPty: (id: string, cwd: string) =>
+  spawnPty: (id: string, cwd?: string | null) =>
     ipcRenderer.invoke("pty:spawn", { id, cwd }) as Promise<void>,
   writePty: (id: string, data: string) =>
     ipcRenderer.invoke("pty:write", { id, data }) as Promise<void>,

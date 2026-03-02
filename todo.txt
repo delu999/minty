@@ -1,0 +1,6 @@
+- cant resize window
+- make window 100% width and height
+- add a button 'new terminal' to just open a terminal and put it in left bar. this shouldnt be inside any folder.
+- add a button 'new empty folder' that just creates a folder in the left bar, without selecting a directory from the  finder
+- make terminal name modifiable
+- make terminal drag and dropable between folders. Folders cant be moved in other folders, but they can be reordered between them

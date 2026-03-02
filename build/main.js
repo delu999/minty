@@ -3,15 +3,29 @@ var __getProtoOf = Object.getPrototypeOf;
 var __defProp = Object.defineProperty;
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
+function __accessProp(key) {
+  return this[key];
+}
+var __toESMCache_node;
+var __toESMCache_esm;
 var __toESM = (mod, isNodeMode, target) => {
+  var canCache = mod != null && typeof mod === "object";
+  if (canCache) {
+    var cache = isNodeMode ? __toESMCache_node ??= new WeakMap : __toESMCache_esm ??= new WeakMap;
+    var cached = cache.get(mod);
+    if (cached)
+      return cached;
+  }
   target = mod != null ? __create(__getProtoOf(mod)) : {};
   const to = isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target;
   for (let key of __getOwnPropNames(mod))
     if (!__hasOwnProp.call(to, key))
       __defProp(to, key, {
-        get: () => mod[key],
+        get: __accessProp.bind(mod, key),
         enumerable: true
       });
+  if (canCache)
+    cache.set(mod, to);
   return to;
 };
 
@@ -37,7 +51,12 @@ function loadProjects() {
   } catch (err) {
     console.error("Failed to load projects:", err);
   }
-  return { projects: [], activeProjectId: null, activeTerminalId: null };
+  return {
+    projects: [],
+    rootTerminals: [],
+    activeProjectId: null,
+    activeTerminalId: null
+  };
 }
 function saveProjects(data) {
   try {
@@ -48,11 +67,13 @@ function saveProjects(data) {
   }
 }
 function createWindow() {
+  const { width, height } = import_electron.screen.getPrimaryDisplay().workAreaSize;
   mainWindow = new import_electron.BrowserWindow({
-    width: 1200,
-    height: 780,
+    width,
+    height,
     minWidth: 480,
     minHeight: 300,
+    resizable: true,
     title: appTitle,
     backgroundColor: "#0f0f0f",
     icon: import_fs.default.existsSync(appIconPath) ? appIconPath : undefined,
@@ -65,6 +86,7 @@ function createWindow() {
     }
   });
   mainWindow.loadFile(buildPath("renderer", "index.html"));
+  mainWindow.maximize();
   mainWindow.on("closed", () => {
     mainWindow = null;
   });
@@ -112,11 +134,12 @@ import_electron.ipcMain.handle("pty:spawn", (_e, { id, cwd }) => {
   }
   env["TERM"] = "xterm-256color";
   env["COLORTERM"] = "truecolor";
+  const spawnCwd = typeof cwd === "string" && cwd.trim().length > 0 ? cwd : import_electron.app.getPath("home");
   const ptyProcess = pty.spawn(shell, [], {
     name: "xterm-256color",
     cols: 80,
     rows: 24,
-    cwd,
+    cwd: spawnCwd,
     env
   });
   ptyProcess.onData((data) => {

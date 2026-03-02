@@ -18,7 +18,7 @@
   --accent-dim:      rgba(62, 207, 142, 0.12);
   --sidebar-w:       220px;
   --header-h:        38px;
-  --footer-h:        52px;
+  --footer-h:        120px;
   --radius:          4px;
   --transition:      0.15s ease;
   font-size: 13px;
@@ -92,7 +92,7 @@ body.macos #sidebar-header {
   overflow-y: auto;
   overflow-x: hidden;
   list-style: none;
-  padding: 4px 6px;
+  padding: 6px;
   -webkit-app-region: no-drag;
 }
 
@@ -113,6 +113,35 @@ body.macos #sidebar-header {
 
 .project-group {
   list-style: none;
+}
+
+.standalone-group {
+  list-style: none;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 8px;
+}
+
+.standalone-title {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  padding: 4px 9px 6px;
+}
+
+.terminal-root-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0;
+  border-radius: var(--radius);
+}
+
+.terminal-root-list.drag-over-root {
+  background: var(--accent-dim);
 }
 
 .project-row {
@@ -145,6 +174,18 @@ body.macos #sidebar-header {
 
 .project-row:focus-visible {
   box-shadow: 0 0 0 1px var(--accent);
+}
+
+.project-row.drag-over-before {
+  box-shadow: inset 0 1px 0 0 var(--accent);
+}
+
+.project-row.drag-over-after {
+  box-shadow: inset 0 -1px 0 0 var(--accent);
+}
+
+.project-row.drag-over-inside {
+  background: var(--accent-dim);
 }
 
 .project-toggle {
@@ -239,6 +280,10 @@ body.macos #sidebar-header {
   transition: background var(--transition), color var(--transition);
 }
 
+.terminal-item-top-level {
+  margin-left: 0;
+}
+
 .terminal-item:hover {
   background: var(--bg-hover);
   color: var(--text);
@@ -251,6 +296,14 @@ body.macos #sidebar-header {
 
 .terminal-item:focus-visible {
   box-shadow: 0 0 0 1px var(--accent);
+}
+
+.terminal-item.drag-over-before {
+  box-shadow: inset 0 1px 0 0 var(--accent);
+}
+
+.terminal-item.drag-over-after {
+  box-shadow: inset 0 -1px 0 0 var(--accent);
 }
 
 .terminal-dot {
@@ -273,8 +326,14 @@ body.macos #sidebar-header {
   font-size: 12px;
 }
 
+.standalone-empty {
+  margin-left: 0;
+}
+
 /* ── Sidebar footer ──────────────────────────────────────────────────────── */
 #sidebar-footer {
+  display: grid;
+  gap: 6px;
   padding: 8px 6px;
   border-top: 1px solid var(--border);
   flex-shrink: 0;
@@ -285,7 +344,7 @@ body.macos #sidebar-header {
   -webkit-app-region: no-drag;
 }
 
-#add-btn {
+#sidebar-footer button {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -303,18 +362,18 @@ body.macos #sidebar-header {
   -webkit-app-region: no-drag;
 }
 
-#add-btn svg,
-#add-btn path {
+#sidebar-footer button svg,
+#sidebar-footer button path {
   pointer-events: none;
 }
 
-#add-btn:hover {
+#sidebar-footer button:hover {
   background: var(--bg-hover);
   color: var(--text);
   border-color: #333;
 }
 
-#add-btn:focus-visible {
+#sidebar-footer button:focus-visible {
   box-shadow: 0 0 0 1px var(--accent);
 }
 
