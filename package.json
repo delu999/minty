@@ -1,7 +1,7 @@
 {
   "name": "minty",
   "productName": "Minty",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A minimal terminal manager",
   "author": "Minty Contributors",
   "main": "build/main.js",

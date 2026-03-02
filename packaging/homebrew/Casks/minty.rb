@@ -1,13 +1,12 @@
 cask "minty" do
-  version "0.1.0"
-  arch arm: "arm64", intel: "x64"
+  version "0.2.0"
+  sha256 "bb4942c59499e7b3e55d8fa59259c4a798df47984993bac23362dea2b653888c"
 
-  sha256 arm: "REPLACE_WITH_ARM64_SHA256", intel: "REPLACE_WITH_X64_SHA256"
-
-  url "https://github.com/REPO_OWNER/minty/releases/download/v#{version}/Minty-#{version}-#{arch}-mac.zip"
+  url "https://github.com/delu999/minty/releases/download/v#{version}/Minty-#{version}-arm64-mac.zip"
   name "Minty"
   desc "A minimal terminal manager"
-  homepage "https://github.com/REPO_OWNER/minty"
+  homepage "https://github.com/delu999/minty"
+  depends_on arch: :arm64
 
   app "Minty.app"
 end
