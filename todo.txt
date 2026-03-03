@@ -1,6 +1,5 @@
-- cant resize window
-- make window 100% width and height
-- add a button 'new terminal' to just open a terminal and put it in left bar. this shouldnt be inside any folder.
-- add a button 'new empty folder' that just creates a folder in the left bar, without selecting a directory from the  finder
+- when using ssh the terminal name color should change, and a border around the terminal should appear
 - make terminal name modifiable
-- make terminal drag and dropable between folders. Folders cant be moved in other folders, but they can be reordered between them
+- The text "PROJECTS" its in the wrong place it shouldnt be over "STANDALONE TERINALS"
+- when doing cmd + + an ungly scrolling bar appears to the right.
+- add a way to accepts from cli when opening (or focusing) the program, so that the project with the argument passed can be focused. example open '/Applications/Minty.app' -p project1 should open Minty with project1 focused (it should be focused on the last open terminal if there is any. 
