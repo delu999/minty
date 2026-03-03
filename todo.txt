@@ -1,4 +1,5 @@
 - when using ssh the terminal name color should change, and a border around the terminal should appear
+- cant remove the neither the folder nor terminal. fix it.
 - make terminal name modifiable
 - The text "PROJECTS" its in the wrong place it shouldnt be over "STANDALONE TERINALS"
 - when doing cmd + + an ungly scrolling bar appears to the right.
